@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "261430698056",
+    "project_id": "management-app0",
+    "storage_bucket": "management-app0.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:261430698056:android:bc90a596f65b2095e2f87d",
+        "android_client_info": {
+          "package_name": "com.revium.management"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBkI-dyxhrWAKS5LwFkD7Tj1y5ki5iftGw"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

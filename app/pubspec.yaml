@@ -1,0 +1,62 @@
+name: expense_tracker
+description: Harcama takip uygulaması - Flutter mobil uygulama
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+  
+  # Firebase
+  firebase_core: ^2.24.2
+  cloud_firestore: ^4.13.6
+  
+  # HTTP istekleri
+  http: ^1.1.0
+  
+  # Dosya seçimi
+  file_picker: ^8.1.2
+  
+  # Lokal depolama
+  shared_preferences: ^2.2.2
+  
+  # Tarih formatlama
+  intl: ^0.20.2
+  
+  # URL açma
+  url_launcher: ^6.2.2
+  
+  # Network connectivity
+  connectivity_plus: ^5.0.2
+  
+  # Dosya işlemleri
+  path_provider: ^2.1.1
+  share_plus: ^7.2.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+  flutter_launcher_icons: ^0.13.1
+
+flutter:
+  uses-material-design: true
+  
+  # Assets - Logo ve favicon dosyaları
+  assets:
+    - assets/logo_header.png
+    - assets/favicon.png
+
+# App ikonu yapılandırması
+flutter_launcher_icons:
+  android: true
+  ios: false
+  image_path: "assets/logo_header.png"
+  adaptive_icon_background: "#FFFFFF"
+  adaptive_icon_foreground: "assets/logo_header.png"
+

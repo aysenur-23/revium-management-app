@@ -1,0 +1,42 @@
+name: iOS Build
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build-ios:
+    runs-on: macos-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.0'
+          channel: 'stable'
+      
+      - name: Install dependencies
+        run: |
+          cd app
+          flutter pub get
+      
+      - name: Setup CocoaPods
+        run: |
+          cd app/ios
+          pod install
+      
+      - name: Build iOS
+        run: |
+          cd app
+          flutter build ios --release --no-codesign
+      
+      - name: Upload IPA
+        uses: actions/upload-artifact@v3
+        with:
+          name: ios-build
+          path: app/build/ios/iphoneos/Runner.app
+

@@ -1,0 +1,100 @@
+# Flutter
+app/.dart_tool/
+app/.flutter-plugins
+app/.flutter-plugins-dependencies
+app/.packages
+app/.pub-cache/
+app/.pub/
+app/build/
+app/ios/Pods/
+app/ios/.symlinks/
+app/ios/Flutter/Flutter.framework
+app/ios/Flutter/Flutter.podspec
+app/ios/Flutter/Generated.xcconfig
+app/ios/Flutter/ephemeral/
+app/ios/Flutter/app.flx
+app/ios/Flutter/app.zip
+app/ios/Flutter/flutter_assets/
+app/ios/Flutter/flutter_export_environment.sh
+app/ios/ServiceDefinitions.json
+app/ios/Runner/GeneratedPluginRegistrant.*
+app/android/.gradle/
+app/android/app/build/
+app/android/build/
+app/android/.idea/
+app/android/local.properties
+app/android/.DS_Store
+app/android/app/.cxx/
+*.iml
+*.ipr
+*.iws
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Backend
+backend/node_modules/
+backend/.env
+backend/.env.local
+backend/token.json
+backend/service-account-key.json
+backend/client_secret*.json
+backend/*.log
+backend/.DS_Store
+
+# Firebase
+.firebase/
+firebase-debug.log
+firebase-debug.*.log
+.firebaserc
+firebase.json
+
+# OS
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# IDE
+.idea/
+.vscode/
+*.iml
+*.ipr
+*.iws
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
+
+# Documentation files (not needed for deploy)
+*.md
+!README.md
+!app/README.md
+!backend/README.md
+
+# Setup scripts
+*.sh
+ios_setup.sh
+
+# Firebase config files (already in project, but can be regenerated)
+firestore.rules
+firebase.json
+.firebaserc
+
+# Duplicate service files
+GoogleService-Info.plist
+google-services.json

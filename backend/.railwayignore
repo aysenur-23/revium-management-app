@@ -1,0 +1,17 @@
+node_modules/
+.env
+.env.local
+*.log
+.DS_Store
+.git/
+.vscode/
+.idea/
+firebase.json
+firebase-debug.log
+firebase-debug.*.log
+functions/
+FIREBASE_DEPLOY_ADIMLAR.md
+RAILWAY_DEPLOY.md
+*.md
+!README.md
+
