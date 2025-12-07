@@ -51,6 +51,15 @@
 	<string>Fotoğraf çekmek için kamera erişimi gerekiyor</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>Dosya kaydetmek için fotoğraf kütüphanesine erişim gerekiyor</string>
+	<key>NSDocumentsFolderUsageDescription</key>
+	<string>Dosya seçmek için belgeler klasörüne erişim gerekiyor</string>
+	<key>NSDownloadsFolderUsageDescription</key>
+	<string>Dosya seçmek için indirilenler klasörüne erişim gerekiyor</string>
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>http</string>
+		<string>https</string>
+	</array>
 </dict>
 </plist>
 

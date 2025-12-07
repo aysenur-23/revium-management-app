@@ -14,6 +14,7 @@ dependencies:
   
   # Firebase
   firebase_core: ^2.24.2
+  firebase_auth: ^4.15.3
   cloud_firestore: ^4.13.6
   
   # HTTP istekleri
@@ -51,12 +52,15 @@ flutter:
   assets:
     - assets/logo_header.png
     - assets/favicon.png
+    - assets/rev-favicon.png
 
 # App ikonu yapılandırması
 flutter_launcher_icons:
-  android: true
-  ios: false
-  image_path: "assets/logo_header.png"
+  android: "launcher_icon"
+  ios: true
+  image_path: "assets/rev-favicon.png"
   adaptive_icon_background: "#FFFFFF"
-  adaptive_icon_foreground: "assets/logo_header.png"
+  adaptive_icon_foreground: "assets/rev-favicon.png"
+  min_sdk_android: 21
+  remove_alpha_ios: true
 

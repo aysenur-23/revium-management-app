@@ -14,6 +14,8 @@ import '../../services/firestore_service.dart';
 import '../../services/connectivity_service.dart';
 import '../../models/expense_entry.dart';
 import '../../widgets/primary_button.dart';
+import '../../utils/app_logger.dart';
+import '../../config/app_config.dart';
 
 class AddEntryTab extends StatefulWidget {
   final UserProfile currentUser;
@@ -27,9 +29,10 @@ class AddEntryTab extends StatefulWidget {
   State<AddEntryTab> createState() => _AddEntryTabState();
 }
 
-class _AddEntryTabState extends State<AddEntryTab> {
+class _AddEntryTabState extends State<AddEntryTab> with AutomaticKeepAliveClientMixin {
   final _formKey = GlobalKey<FormState>();
   final _descriptionController = TextEditingController();
+  final _notesController = TextEditingController(); // Opsiyonel açıklama
   final _amountController = TextEditingController();
   File? _selectedFile; // Mobil için
   Uint8List? _selectedFileBytes; // Web için
@@ -37,8 +40,12 @@ class _AddEntryTabState extends State<AddEntryTab> {
   bool _isUploading = false;
 
   @override
+  bool get wantKeepAlive => true;
+
+  @override
   void dispose() {
     _descriptionController.dispose();
+    _notesController.dispose();
     _amountController.dispose();
     super.dispose();
   }
@@ -51,10 +58,10 @@ class _AddEntryTabState extends State<AddEntryTab> {
         withData: kIsWeb, // Web için dosya baytlarını al
       );
 
-      if (result != null && result.files.single.name != null) {
+      if (result != null && result.files.isNotEmpty && result.files.single.name.isNotEmpty) {
         final platformFile = result.files.single;
         final fileName = platformFile.name;
-        final fileSize = platformFile.size;
+        final fileSize = platformFile.size ?? 0;
         const maxFileSize = 50 * 1024 * 1024; // 50MB
 
         if (fileSize > maxFileSize) {
@@ -90,8 +97,12 @@ class _AddEntryTabState extends State<AddEntryTab> {
             _selectedFileBytes = platformFile.bytes;
             _selectedFile = null; // Web'de File objesi kullanmıyoruz
           } else {
-            _selectedFile = File(platformFile.path!);
-            _selectedFileBytes = null;
+            if (platformFile.path != null && platformFile.path!.isNotEmpty) {
+              _selectedFile = File(platformFile.path!);
+              _selectedFileBytes = null;
+            } else {
+              throw Exception('Dosya yolu alınamadı. Lütfen tekrar deneyin.');
+            }
           }
         });
       }
@@ -161,24 +172,13 @@ class _AddEntryTabState extends State<AddEntryTab> {
       _isUploading = true;
     });
 
-    try {
-      // Backend sağlık kontrolü
-      final isBackendHealthy = await UploadService.checkBackendHealth();
-      if (!isBackendHealthy) {
-        throw Exception(
-          'Backend sunucusuna bağlanılamıyor. Lütfen backend\'in çalıştığından emin olun.'
-        );
-      }
+    // Upload progress dialog göster
+    BuildContext? dialogContext;
+    bool dialogShown = false;
 
-      // Backend bağlantısını kontrol et
-      final backendHealthy = await UploadService.checkBackendHealth();
-      if (!backendHealthy) {
-        throw Exception('Backend sunucusuna bağlanılamıyor. Lütfen backend\'in çalıştığından ve internet bağlantınızın olduğundan emin olun.');
-      }
-
-      // Upload progress dialog göster
-      bool dialogShown = false;
-      BuildContext? dialogContext;
+    // Dialog'u göster
+    if (mounted) {
+      await Future.delayed(const Duration(milliseconds: 100)); // UI güncellemesi için bekle
       if (mounted) {
         showDialog(
           context: context,
@@ -205,6 +205,15 @@ class _AddEntryTabState extends State<AddEntryTab> {
         );
         dialogShown = true;
       }
+    }
+
+    try {
+      // Miktarı parse et (dosya isimlendirme için)
+      final amountText = _amountController.text.trim().replaceAll(',', '.');
+      final amount = double.tryParse(amountText);
+      if (amount == null || amount <= 0) {
+        throw Exception('Geçersiz miktar. Lütfen geçerli bir sayı girin.');
+      }
 
       // Backend'e dosya yükle
       UploadResult? uploadResult;
@@ -214,16 +223,24 @@ class _AddEntryTabState extends State<AddEntryTab> {
           fileBytes: kIsWeb ? _selectedFileBytes : null,
           fileName: _selectedFileName,
           ownerId: widget.currentUser.userId,
+          ownerName: widget.currentUser.fullName,
+          amount: amount,
+          description: _descriptionController.text.trim(),
+          notes: _notesController.text.trim().isEmpty ? null : _notesController.text.trim(),
         );
-      } finally {
-        // Progress dialog'u her durumda kapat
-        if (mounted && dialogShown && dialogContext != null) {
-          try {
-            Navigator.of(dialogContext!).pop();
-          } catch (_) {
-            // Dialog zaten kapatılmış olabilir
-          }
+      } catch (uploadError) {
+        // Upload hatası - dialog'u kapat ve hatayı fırlat
+        if (dialogShown && mounted) {
+          _closeDialogSafely(dialogContext, dialogShown);
+          dialogShown = false;
         }
+        rethrow;
+      }
+      
+      // Başarılı olduysa dialog'u kapat
+      if (dialogShown && mounted) {
+        _closeDialogSafely(dialogContext, dialogShown);
+        dialogShown = false;
       }
 
       if (uploadResult == null) {
@@ -231,11 +248,13 @@ class _AddEntryTabState extends State<AddEntryTab> {
       }
 
       // ExpenseEntry oluştur
+
       final entry = ExpenseEntry(
         ownerId: widget.currentUser.userId,
         ownerName: widget.currentUser.fullName,
         description: _descriptionController.text.trim(),
-        amount: double.parse(_amountController.text.trim().replaceAll(',', '.')),
+        notes: _notesController.text.trim().isEmpty ? null : _notesController.text.trim(),
+        amount: amount,
         fileUrl: uploadResult.fileUrl,
         fileType: _getFileType(_selectedFileName),
         driveFileId: uploadResult.fileId,
@@ -246,6 +265,7 @@ class _AddEntryTabState extends State<AddEntryTab> {
 
       // Formu temizle
       _descriptionController.clear();
+      _notesController.clear();
       _amountController.clear();
       setState(() {
         _selectedFile = null;
@@ -262,28 +282,120 @@ class _AddEntryTabState extends State<AddEntryTab> {
         );
       }
     } catch (e) {
-      // Progress dialog'u kapat (varsa)
-      if (mounted) {
-        try {
-          Navigator.of(context).pop();
-        } catch (_) {
-          // Dialog zaten kapatılmış olabilir
-        }
+      debugPrint('❌ Kayıt ekleme hatası: $e');
+      
+      // Hata mesajını hazırla
+      final errorMessage = e.toString();
+      String userMessage = 'Kayıt ekleme hatası';
+      
+      if (errorMessage.contains('zaman aşımı') || errorMessage.contains('timeout')) {
+        userMessage = 'Dosya yükleme zaman aşımı. İnternet bağlantınızı kontrol edin.';
+      } else if (errorMessage.contains('bağlanılamadı') || errorMessage.contains('connection') || errorMessage.contains('SocketException')) {
+        userMessage = 'Backend sunucusuna bağlanılamıyor. İnternet bağlantınızı kontrol edin.';
+      } else if (errorMessage.contains('500') || errorMessage.contains('Internal')) {
+        userMessage = 'Backend sunucusunda bir hata oluştu. Lütfen daha sonra tekrar deneyin.';
+      } else if (errorMessage.contains('401') || errorMessage.contains('403') || errorMessage.contains('authorization')) {
+        userMessage = 'Yetkilendirme hatası. Backend ayarlarını kontrol edin.';
+      } else if (errorMessage.contains('404')) {
+        userMessage = 'Backend endpoint bulunamadı. Backend URL\'ini kontrol edin.';
+      } else {
+        userMessage = 'Hata: ${errorMessage.length > 100 ? errorMessage.substring(0, 100) + "..." : errorMessage}';
       }
-      if (mounted) {
+      
+      // Dialog'u hata mesajı ile değiştir
+      if (dialogShown && mounted && dialogContext != null) {
+        Navigator.of(dialogContext!, rootNavigator: true).pop(); // Progress dialog'u kapat
+        await Future.delayed(const Duration(milliseconds: 200));
+        
+        // Hata dialog'unu göster
+        if (mounted) {
+          showDialog(
+            context: context,
+            barrierDismissible: true,
+            builder: (ctx) => AlertDialog(
+              title: const Text('Hata'),
+              content: Text(userMessage),
+              actions: [
+                TextButton(
+                  onPressed: () {
+                    Navigator.of(ctx).pop();
+                  },
+                  child: const Text('Tamam'),
+                ),
+              ],
+            ),
+          );
+        }
+      } else if (mounted) {
+        // Dialog yoksa SnackBar göster
+        ScaffoldMessenger.of(context).clearSnackBars();
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Kayıt ekleme hatası: ${e.toString()}'),
+            content: Text(userMessage),
             backgroundColor: Colors.red,
+            duration: const Duration(seconds: 6),
+            action: SnackBarAction(
+              label: 'Tamam',
+              textColor: Colors.white,
+              onPressed: () {
+                ScaffoldMessenger.of(context).hideCurrentSnackBar();
+              },
+            ),
           ),
         );
       }
     } finally {
+      // Dialog'u kesinlikle kapat (eğer hala açıksa)
+      if (dialogShown && mounted) {
+        _closeDialogSafely(dialogContext, dialogShown);
+        dialogShown = false;
+      }
+      
       if (mounted) {
         setState(() {
           _isUploading = false;
         });
       }
+    }
+  }
+
+  /// Dialog'u güvenli bir şekilde kapatır
+  void _closeDialogSafely(BuildContext? dialogContext, bool dialogShown) {
+    if (!dialogShown) {
+      return;
+    }
+
+    try {
+      // Önce dialog context ile dene
+      if (dialogContext != null && mounted) {
+        try {
+          final navigator = Navigator.of(dialogContext, rootNavigator: true);
+          if (navigator.canPop()) {
+            navigator.pop();
+            debugPrint('✅ Dialog dialogContext ile kapatıldı');
+            return;
+          }
+        } catch (e) {
+          debugPrint('⚠️ Dialog kapatma hatası (dialogContext): $e');
+        }
+      }
+      
+      // Ana context ile kapat
+      if (mounted) {
+        try {
+          final navigator = Navigator.of(context, rootNavigator: true);
+          if (navigator.canPop()) {
+            navigator.pop();
+            debugPrint('✅ Dialog ana context ile kapatıldı');
+          } else {
+            debugPrint('⚠️ Dialog zaten kapatılmış (canPop false)');
+          }
+        } catch (e) {
+          debugPrint('⚠️ Dialog kapatma hatası (ana context): $e');
+        }
+      }
+    } catch (e) {
+      debugPrint('❌ Dialog kapatma genel hatası: $e');
     }
   }
 
@@ -301,45 +413,57 @@ class _AddEntryTabState extends State<AddEntryTab> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             // Başlık kartı
-            Card(
-              elevation: 0,
-              color: theme.colorScheme.primaryContainer.withOpacity(0.3),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16),
+            Container(
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: theme.colorScheme.primaryContainer.withValues(alpha: 0.4),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(
+                  color: theme.colorScheme.outline.withValues(alpha: 0.1),
+                  width: 1,
+                ),
               ),
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Row(
-                  children: [
-                    Icon(
+              child: Row(
+                children: [
+                  Container(
+                    width: 56,
+                    height: 56,
+                    decoration: BoxDecoration(
+                      color: theme.colorScheme.primary.withValues(alpha: 0.2),
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    child: Icon(
                       Icons.add_circle_outline,
                       color: theme.colorScheme.primary,
                       size: 28,
                     ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'Yeni Harcama Ekle',
-                            style: theme.textTheme.titleLarge?.copyWith(
-                              fontWeight: FontWeight.bold,
-                              color: theme.colorScheme.primary,
-                            ),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Yeni Harcama Ekle',
+                          style: theme.textTheme.titleLarge?.copyWith(
+                            fontWeight: FontWeight.w700,
+                            color: theme.colorScheme.primary,
+                            fontSize: 20,
+                            letterSpacing: -0.3,
                           ),
-                          const SizedBox(height: 4),
-                          Text(
-                            'Harcama bilgilerinizi girin',
-                            style: theme.textTheme.bodySmall?.copyWith(
-                              color: theme.colorScheme.onSurface.withOpacity(0.6),
-                            ),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          'Harcama bilgilerinizi girin',
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
+                            fontSize: 14,
                           ),
-                        ],
-                      ),
+                        ),
+                      ],
                     ),
-                  ],
-                ),
+                  ),
+                ],
               ),
             ),
             SizedBox(height: spacing),
@@ -356,13 +480,13 @@ class _AddEntryTabState extends State<AddEntryTab> {
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(16),
                   borderSide: BorderSide(
-                    color: theme.colorScheme.outline.withOpacity(0.3),
+                    color: theme.colorScheme.outline.withValues(alpha: 0.3),
                   ),
                 ),
                 enabledBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(16),
                   borderSide: BorderSide(
-                    color: theme.colorScheme.outline.withOpacity(0.3),
+                    color: theme.colorScheme.outline.withValues(alpha: 0.3),
                   ),
                 ),
                 focusedBorder: OutlineInputBorder(
@@ -375,8 +499,8 @@ class _AddEntryTabState extends State<AddEntryTab> {
                 filled: true,
                 fillColor: theme.colorScheme.surface,
                 contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 20,
-                  vertical: 18,
+                  horizontal: 24,
+                  vertical: 20,
                 ),
               ),
               validator: (value) {
@@ -408,13 +532,13 @@ class _AddEntryTabState extends State<AddEntryTab> {
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(16),
                   borderSide: BorderSide(
-                    color: theme.colorScheme.outline.withOpacity(0.3),
+                    color: theme.colorScheme.outline.withValues(alpha: 0.3),
                   ),
                 ),
                 enabledBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(16),
                   borderSide: BorderSide(
-                    color: theme.colorScheme.outline.withOpacity(0.3),
+                    color: theme.colorScheme.outline.withValues(alpha: 0.3),
                   ),
                 ),
                 focusedBorder: OutlineInputBorder(
@@ -427,8 +551,8 @@ class _AddEntryTabState extends State<AddEntryTab> {
                 filled: true,
                 fillColor: theme.colorScheme.surface,
                 contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 20,
-                  vertical: 18,
+                  horizontal: 24,
+                  vertical: 20,
                 ),
               ),
               keyboardType: const TextInputType.numberWithOptions(decimal: true),
@@ -450,8 +574,48 @@ class _AddEntryTabState extends State<AddEntryTab> {
                 return null;
               },
               enabled: !_isUploading,
-              textInputAction: TextInputAction.done,
-              onFieldSubmitted: (_) => _saveEntry(),
+              textInputAction: TextInputAction.next,
+            ),
+            SizedBox(height: spacing),
+            // Açıklama (Opsiyonel)
+            TextFormField(
+              controller: _notesController,
+              decoration: InputDecoration(
+                labelText: 'Açıklama (opsiyonel)',
+                hintText: 'Ek bilgi veya notlar',
+                prefixIcon: Icon(
+                  Icons.note_outlined,
+                  color: theme.colorScheme.primary,
+                ),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(16),
+                  borderSide: BorderSide(
+                    color: theme.colorScheme.outline.withValues(alpha: 0.3),
+                  ),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(16),
+                  borderSide: BorderSide(
+                    color: theme.colorScheme.outline.withValues(alpha: 0.3),
+                  ),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(16),
+                  borderSide: BorderSide(
+                    color: theme.colorScheme.primary,
+                    width: 2,
+                  ),
+                ),
+                filled: true,
+                fillColor: theme.colorScheme.surface,
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 24,
+                  vertical: 20,
+                ),
+              ),
+              maxLines: 3,
+              enabled: !_isUploading,
+              textInputAction: TextInputAction.next,
             ),
             SizedBox(height: spacing),
             // Dosya Seç butonu
@@ -463,12 +627,12 @@ class _AddEntryTabState extends State<AddEntryTab> {
                 style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
               ),
               style: OutlinedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(vertical: 18),
+                padding: const EdgeInsets.symmetric(vertical: 20),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(16),
                 ),
                 side: BorderSide(
-                  color: theme.colorScheme.primary.withOpacity(0.5),
+                  color: theme.colorScheme.primary.withValues(alpha: 0.5),
                   width: 1.5,
                 ),
               ),
@@ -490,20 +654,13 @@ class _AddEntryTabState extends State<AddEntryTab> {
                 },
                 child: Container(
                   margin: EdgeInsets.only(top: spacing / 2),
-                  padding: const EdgeInsets.all(16),
+                  padding: const EdgeInsets.all(20),
                   decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                      colors: [
-                        theme.colorScheme.primaryContainer.withOpacity(0.5),
-                        theme.colorScheme.primaryContainer.withOpacity(0.3),
-                      ],
-                    ),
-                    borderRadius: BorderRadius.circular(16),
+                    color: theme.colorScheme.primaryContainer.withValues(alpha: 0.4),
+                    borderRadius: BorderRadius.circular(20),
                     border: Border.all(
-                      color: theme.colorScheme.primary.withOpacity(0.3),
-                      width: 1.5,
+                      color: theme.colorScheme.outline.withValues(alpha: 0.1),
+                      width: 1,
                     ),
                   ),
                   child: Column(
@@ -519,7 +676,7 @@ class _AddEntryTabState extends State<AddEntryTab> {
                                 borderRadius: BorderRadius.circular(12),
                                 boxShadow: [
                                   BoxShadow(
-                                    color: theme.colorScheme.primary.withOpacity(0.2),
+                                    color: theme.colorScheme.primary.withValues(alpha: 0.2),
                                     blurRadius: 4,
                                     offset: const Offset(0, 2),
                                   ),
@@ -544,7 +701,7 @@ class _AddEntryTabState extends State<AddEntryTab> {
                                             child: Icon(
                                               Icons.image_outlined,
                                               color: theme.colorScheme.onSurface
-                                                  .withOpacity(0.5),
+                                                  .withValues(alpha: 0.5),
                                             ),
                                           );
                                         },
@@ -565,7 +722,7 @@ class _AddEntryTabState extends State<AddEntryTab> {
                                             child: Icon(
                                               Icons.image_outlined,
                                               color: theme.colorScheme.onSurface
-                                                  .withOpacity(0.5),
+                                                  .withValues(alpha: 0.5),
                                             ),
                                           );
                                         },
@@ -581,7 +738,7 @@ class _AddEntryTabState extends State<AddEntryTab> {
                                 borderRadius: BorderRadius.circular(12),
                                 boxShadow: [
                                   BoxShadow(
-                                    color: theme.colorScheme.primary.withOpacity(0.2),
+                                    color: theme.colorScheme.primary.withValues(alpha: 0.2),
                                     blurRadius: 4,
                                     offset: const Offset(0, 2),
                                   ),
@@ -636,7 +793,7 @@ class _AddEntryTabState extends State<AddEntryTab> {
                                       style: TextStyle(
                                         color: theme.colorScheme
                                             .onPrimaryContainer
-                                            .withOpacity(0.7),
+                                            .withValues(alpha: 0.7),
                                         fontSize: 12,
                                       ),
                                     );

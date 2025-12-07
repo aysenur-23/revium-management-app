@@ -9,6 +9,7 @@ import '../models/user_profile.dart';
 class LocalStorageService {
   static const String _keyUserId = 'userId';
   static const String _keyFullName = 'fullName';
+  static const String _keyPasswordResetPending = 'passwordResetPending';
 
   /// Kullanıcı bilgilerini kaydeder
   static Future<void> saveUser(String userId, String fullName) async {
@@ -44,6 +45,18 @@ class LocalStorageService {
         .trim()
         .replaceAll(RegExp(r'\s+'), '_')
         .replaceAll(RegExp(r'[^a-z0-9_]'), '');
+  }
+
+  /// Şifre sıfırlama beklemede flag'ini ayarlar
+  static Future<void> setPasswordResetPending(bool value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_keyPasswordResetPending, value);
+  }
+
+  /// Şifre sıfırlama beklemede mi kontrol eder
+  static Future<bool> isPasswordResetPending() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_keyPasswordResetPending) ?? false;
   }
 }
 

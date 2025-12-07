@@ -12,6 +12,8 @@ import '../../widgets/error_retry_widget.dart';
 import '../../widgets/loading_widget.dart';
 import '../../widgets/total_amount_card.dart';
 import '../../models/expense_entry.dart';
+import '../../config/app_config.dart';
+import '../../utils/app_logger.dart';
 import '../home_screen.dart';
 
 class AllEntriesTab extends StatefulWidget {
@@ -28,11 +30,14 @@ enum SortOption {
   amountAsc,
 }
 
-class _AllEntriesTabState extends State<AllEntriesTab> {
+class _AllEntriesTabState extends State<AllEntriesTab> with AutomaticKeepAliveClientMixin {
   String? _selectedOwnerFilter;
   DateTimeRange? _selectedDateRange;
   final TextEditingController _searchController = TextEditingController();
   SortOption _sortOption = SortOption.dateDesc;
+
+  @override
+  bool get wantKeepAlive => true;
 
   @override
   void dispose() {
@@ -137,6 +142,7 @@ class _AllEntriesTabState extends State<AllEntriesTab> {
 
   @override
   Widget build(BuildContext context) {
+    super.build(context); // AutomaticKeepAliveClientMixin için gerekli
     final isSmallScreen = MediaQuery.of(context).size.width < 600;
 
     return Column(
@@ -151,7 +157,7 @@ class _AllEntriesTabState extends State<AllEntriesTab> {
             color: Theme.of(context).colorScheme.surface,
             boxShadow: [
               BoxShadow(
-                color: Theme.of(context).colorScheme.primary.withOpacity(0.05),
+                color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.05),
                 blurRadius: 4,
                 offset: const Offset(0, 2),
               ),
@@ -181,13 +187,13 @@ class _AllEntriesTabState extends State<AllEntriesTab> {
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(16),
                       borderSide: BorderSide(
-                        color: Theme.of(context).colorScheme.outline.withOpacity(0.2),
+                        color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.2),
                       ),
                     ),
                     enabledBorder: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(16),
                       borderSide: BorderSide(
-                        color: Theme.of(context).colorScheme.outline.withOpacity(0.2),
+                        color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.2),
                       ),
                     ),
                     focusedBorder: OutlineInputBorder(
@@ -200,8 +206,8 @@ class _AllEntriesTabState extends State<AllEntriesTab> {
                     filled: true,
                     fillColor: Theme.of(context).colorScheme.surface,
                     contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 20,
-                      vertical: 14,
+                      horizontal: 24,
+                      vertical: 16,
                     ),
                   ),
                   onChanged: (value) {
@@ -212,7 +218,7 @@ class _AllEntriesTabState extends State<AllEntriesTab> {
               const SizedBox(width: 12),
               Container(
                 decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.primaryContainer.withOpacity(0.3),
+                  color: Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.3),
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: PopupMenuButton<SortOption>(
@@ -286,8 +292,8 @@ class _AllEntriesTabState extends State<AllEntriesTab> {
 
             return Container(
               padding: EdgeInsets.symmetric(
-                horizontal: isSmallScreen ? 12 : 16,
-                vertical: isSmallScreen ? 8 : 12,
+                horizontal: isSmallScreen ? 16 : 20,
+                vertical: isSmallScreen ? 12 : 16,
               ),
               decoration: BoxDecoration(
                 color: Theme.of(context).colorScheme.surface,
@@ -438,7 +444,8 @@ class _AllEntriesTabState extends State<AllEntriesTab> {
           child: StreamBuilder<List<ExpenseEntry>>(
             stream: FirestoreService.streamAllEntries(),
             builder: (context, snapshot) {
-              if (snapshot.connectionState == ConnectionState.waiting) {
+              // Sadece ilk yüklemede loading göster
+              if (snapshot.connectionState == ConnectionState.waiting && !snapshot.hasData) {
                 return const LoadingWidget(message: 'Kayıtlar yükleniyor...');
               }
 
@@ -485,12 +492,13 @@ class _AllEntriesTabState extends State<AllEntriesTab> {
                           : 'Filtrelenmiş Toplam',
                     ),
                     Expanded(
-                      child: ListView.builder(
-                        itemCount: filteredEntries.length,
-                        itemBuilder: (context, index) {
+                          child: ListView.builder(
+                            itemCount: filteredEntries.length,
+                            cacheExtent: AppConfig.listViewCacheExtent.toDouble(),
+                            itemBuilder: (context, index) {
                           return TweenAnimationBuilder<double>(
                             tween: Tween(begin: 0.0, end: 1.0),
-                            duration: Duration(milliseconds: 200 + (index * 50)),
+                            duration: Duration(milliseconds: 200 + (index * 50.0).toInt()),
                             curve: Curves.easeOut,
                             builder: (context, value, child) {
                               return Opacity(

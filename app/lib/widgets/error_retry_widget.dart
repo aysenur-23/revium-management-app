@@ -1,7 +1,5 @@
-/**
- * Hata ve retry widget'ı
- * Hata durumlarında retry butonu gösterir
- */
+/// Hata ve retry widget'ı
+/// Hata durumlarında retry butonu gösterir
 
 import 'package:flutter/material.dart';
 
@@ -36,7 +34,7 @@ class ErrorRetryWidget extends StatelessWidget {
             Text(
               message,
               style: theme.textTheme.titleMedium?.copyWith(
-                color: theme.colorScheme.onSurface.withOpacity(0.7),
+                color: theme.colorScheme.onSurface.withValues(alpha: 0.7),
               ),
               textAlign: TextAlign.center,
             ),

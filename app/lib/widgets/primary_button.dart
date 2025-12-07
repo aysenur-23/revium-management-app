@@ -27,12 +27,12 @@ class PrimaryButton extends StatelessWidget {
         onPressed: isLoading ? null : onPressed,
         style: ElevatedButton.styleFrom(
           backgroundColor: theme.colorScheme.primary,
-          foregroundColor: theme.colorScheme.onPrimary,
+          foregroundColor: Colors.white,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(16),
           ),
-          elevation: 4,
-          shadowColor: theme.colorScheme.primary.withOpacity(0.4),
+          elevation: 0,
+          shadowColor: Colors.transparent,
         ),
         child: isLoading
             ? const SizedBox(
@@ -45,10 +45,10 @@ class PrimaryButton extends StatelessWidget {
               )
             : Text(
                 text,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 17,
-                  fontWeight: FontWeight.w600,
-                  letterSpacing: 0.5,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.3,
                 ),
               ),
       ),

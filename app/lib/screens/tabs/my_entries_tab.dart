@@ -4,17 +4,19 @@
  */
 
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart' show debugPrint;
 import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import '../../services/firestore_service.dart';
 import '../../services/export_service.dart';
+import '../../services/upload_service.dart';
 import '../../widgets/entry_card.dart';
 import '../../widgets/empty_state_widget.dart';
 import '../../widgets/error_retry_widget.dart';
 import '../../widgets/loading_widget.dart';
 import '../../widgets/total_amount_card.dart';
+import '../../config/app_config.dart';
+import '../../utils/app_logger.dart';
 import '../home_screen.dart';
 
 enum MySortOption {
@@ -36,9 +38,13 @@ class MyEntriesTab extends StatefulWidget {
   State<MyEntriesTab> createState() => _MyEntriesTabState();
 }
 
-class _MyEntriesTabState extends State<MyEntriesTab> {
+class _MyEntriesTabState extends State<MyEntriesTab> with AutomaticKeepAliveClientMixin {
   final TextEditingController _searchController = TextEditingController();
   MySortOption _sortOption = MySortOption.dateDesc;
+  bool _hasReceivedData = false; // İlk veri geldi mi kontrolü
+
+  @override
+  bool get wantKeepAlive => true;
 
   @override
   void dispose() {
@@ -119,18 +125,89 @@ class _MyEntriesTabState extends State<MyEntriesTab> {
     }
   }
 
+  Future<void> _deleteEntry(BuildContext context, ExpenseEntry entry) async {
+    // Silme onay dialog'u
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Kayıt Sil'),
+        content: Text('Bu kaydı silmek istediğinizden emin misiniz?\n\n${entry.description} - ₺${entry.amount.toStringAsFixed(2)}'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('İptal'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            style: TextButton.styleFrom(
+              foregroundColor: Colors.red,
+            ),
+            child: const Text('Sil'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || entry.id == null) {
+      return;
+    }
+
+    try {
+      // Önce Google Drive'dan dosyayı sil (driveFileId varsa)
+      if (entry.driveFileId.isNotEmpty) {
+        try {
+          await UploadService.deleteFile(entry.driveFileId);
+        } catch (e) {
+          // Dosya silme hatası olsa bile Firestore'dan silmeye devam et
+          // Kullanıcıya uyarı göster
+          if (context.mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Dosya silinemedi ama kayıt silinecek: ${e.toString()}'),
+                backgroundColor: Colors.orange,
+                duration: const Duration(seconds: 3),
+              ),
+            );
+          }
+        }
+      }
+
+      // Firestore'dan sil
+      await FirestoreService.deleteEntry(entry.id!, widget.currentUser.userId);
+
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Kayıt ve dosya başarıyla silindi'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Silme hatası: ${e.toString()}'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    super.build(context); // AutomaticKeepAliveClientMixin için gerekli
     return Column(
       children: [
         // Arama bar
         Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
           decoration: BoxDecoration(
             color: Theme.of(context).colorScheme.surface,
             boxShadow: [
               BoxShadow(
-                color: Theme.of(context).colorScheme.primary.withOpacity(0.05),
+                color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.05),
                 blurRadius: 4,
                 offset: const Offset(0, 2),
               ),
@@ -160,13 +237,13 @@ class _MyEntriesTabState extends State<MyEntriesTab> {
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(16),
                       borderSide: BorderSide(
-                        color: Theme.of(context).colorScheme.outline.withOpacity(0.2),
+                        color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.2),
                       ),
                     ),
                     enabledBorder: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(16),
                       borderSide: BorderSide(
-                        color: Theme.of(context).colorScheme.outline.withOpacity(0.2),
+                        color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.2),
                       ),
                     ),
                     focusedBorder: OutlineInputBorder(
@@ -179,8 +256,8 @@ class _MyEntriesTabState extends State<MyEntriesTab> {
                     filled: true,
                     fillColor: Theme.of(context).colorScheme.surface,
                     contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 20,
-                      vertical: 14,
+                      horizontal: 24,
+                      vertical: 16,
                     ),
                   ),
                   onChanged: (value) {
@@ -191,7 +268,7 @@ class _MyEntriesTabState extends State<MyEntriesTab> {
               const SizedBox(width: 12),
               Container(
                 decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.primaryContainer.withOpacity(0.3),
+                  color: Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.3),
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: PopupMenuButton<MySortOption>(
@@ -260,13 +337,10 @@ class _MyEntriesTabState extends State<MyEntriesTab> {
           child: StreamBuilder<List<ExpenseEntry>>(
             stream: FirestoreService.streamMyEntries(widget.currentUser.userId),
             builder: (context, snapshot) {
-              if (snapshot.connectionState == ConnectionState.waiting) {
-                return const LoadingWidget(message: 'Kayıtlar yükleniyor...');
-              }
-
+              // Hata durumu - öncelikli kontrol
               if (snapshot.hasError) {
                 final errorMessage = snapshot.error.toString();
-                debugPrint('MyEntriesTab StreamBuilder hatası: $errorMessage');
+                AppLogger.error('MyEntriesTab StreamBuilder hatası', snapshot.error);
                 
                 // Firestore index hatası kontrolü
                 String userMessage = 'Veriler yüklenirken bir hata oluştu';
@@ -280,12 +354,49 @@ class _MyEntriesTabState extends State<MyEntriesTab> {
                   message: userMessage,
                   onRetry: () {
                     // StreamBuilder otomatik yeniden deneyecek
-                    setState(() {});
                   },
                 );
               }
 
+              // Veri varsa hemen göster (cache'den veya yeni veri)
               final allEntries = snapshot.data ?? [];
+              
+              // İlk veri geldiğinde flag'i set et
+              if (snapshot.hasData && !_hasReceivedData) {
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (mounted) {
+                    setState(() {
+                      _hasReceivedData = true;
+                    });
+                  }
+                });
+              }
+              
+              // Sadece ilk yüklemede ve hiç veri gelmemişse loading göster
+              // Eğer daha önce veri geldiyse (hasReceivedData true ise) boş liste göster
+              if (snapshot.connectionState == ConnectionState.waiting && 
+                  !_hasReceivedData && 
+                  !snapshot.hasData) {
+                return const LoadingWidget(message: 'Kayıtlar yükleniyor...');
+              }
+              
+              // Eğer connectionState active veya done ise ama veri yoksa, empty state göster
+              if ((snapshot.connectionState == ConnectionState.active || 
+                   snapshot.connectionState == ConnectionState.done) &&
+                  allEntries.isEmpty) {
+                // Veri geldi ama boş, empty state göster
+                if (!_hasReceivedData) {
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    if (mounted) {
+                      setState(() {
+                        _hasReceivedData = true;
+                      });
+                    }
+                  });
+                }
+              }
+              
+              // Eğer veri geldiyse ama boşsa, empty state göster
               final filteredEntries = _filterAndSort(allEntries);
 
               if (allEntries.isEmpty) {
@@ -334,23 +445,14 @@ class _MyEntriesTabState extends State<MyEntriesTab> {
                     Expanded(
                       child: ListView.builder(
                         itemCount: filteredEntries.length,
+                        cacheExtent: 500.0, // Daha büyük cache için
+                        addAutomaticKeepAlives: false, // Performans için
+                        addRepaintBoundaries: true, // Repaint optimizasyonu
                         itemBuilder: (context, index) {
-                          return TweenAnimationBuilder<double>(
-                            tween: Tween(begin: 0.0, end: 1.0),
-                            duration: Duration(milliseconds: 200 + (index * 50)),
-                            curve: Curves.easeOut,
-                            builder: (context, value, child) {
-                              return Opacity(
-                                opacity: value,
-                                child: Transform.translate(
-                                  offset: Offset(0, 20 * (1 - value)),
-                                  child: child,
-                                ),
-                              );
-                            },
-                            child: EntryCard(
-                              entry: filteredEntries[index],
-                            ),
+                          return EntryCard(
+                            entry: filteredEntries[index],
+                            onDelete: () => _deleteEntry(context, filteredEntries[index]),
+                            showOwnerIcon: true, // "Benim yüklediklerim" sekmesinde kullanıcı adını göster
                           );
                         },
                       ),

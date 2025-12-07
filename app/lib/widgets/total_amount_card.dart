@@ -34,34 +34,33 @@ class TotalAmountCard extends StatelessWidget {
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            theme.colorScheme.primaryContainer,
-            theme.colorScheme.primaryContainer.withOpacity(0.8),
-          ],
-        ),
+        color: theme.colorScheme.primaryContainer,
         borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: theme.colorScheme.outline.withValues(alpha: 0.1),
+          width: 1,
+        ),
         boxShadow: [
           BoxShadow(
-            color: theme.colorScheme.primary.withOpacity(0.15),
-            blurRadius: 12,
-            offset: const Offset(0, 4),
+            color: theme.colorScheme.shadow.withValues(alpha: 0.08),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+            spreadRadius: 0,
           ),
         ],
       ),
       child: Row(
         children: [
           Container(
-            padding: const EdgeInsets.all(12),
+            width: 56,
+            height: 56,
             decoration: BoxDecoration(
-              color: theme.colorScheme.primary.withOpacity(0.2),
-              borderRadius: BorderRadius.circular(14),
+              color: theme.colorScheme.primary.withValues(alpha: 0.2),
+              borderRadius: BorderRadius.circular(16),
             ),
             child: Icon(
-              Icons.account_balance_wallet,
-              color: theme.colorScheme.onPrimaryContainer,
+              Icons.account_balance_wallet_rounded,
+              color: theme.colorScheme.primary,
               size: 28,
             ),
           ),
@@ -73,40 +72,36 @@ class TotalAmountCard extends StatelessWidget {
                 Text(
                   title,
                   style: theme.textTheme.bodyMedium?.copyWith(
-                    color: theme.colorScheme.onPrimaryContainer.withOpacity(0.8),
-                    fontWeight: FontWeight.w500,
+                    color: theme.colorScheme.onPrimaryContainer.withValues(alpha: 0.7),
+                    fontWeight: FontWeight.w600,
+                    fontSize: 14,
                   ),
                 ),
-                const SizedBox(height: 6),
+                const SizedBox(height: 8),
                 Text(
                   formattedTotal,
                   style: theme.textTheme.headlineMedium?.copyWith(
-                    fontWeight: FontWeight.bold,
+                    fontWeight: FontWeight.w800,
                     color: theme.colorScheme.onPrimaryContainer,
                     fontSize: 24,
+                    letterSpacing: -0.5,
                   ),
                 ),
               ],
             ),
           ),
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
             decoration: BoxDecoration(
               color: theme.colorScheme.primary,
-              borderRadius: BorderRadius.circular(16),
-              boxShadow: [
-                BoxShadow(
-                  color: theme.colorScheme.primary.withOpacity(0.3),
-                  blurRadius: 4,
-                  offset: const Offset(0, 2),
-                ),
-              ],
+              borderRadius: BorderRadius.circular(12),
             ),
             child: Text(
               '${entries.length}',
               style: theme.textTheme.titleMedium?.copyWith(
-                color: theme.colorScheme.onPrimary,
-                fontWeight: FontWeight.bold,
+                color: Colors.white,
+                fontWeight: FontWeight.w800,
+                fontSize: 16,
               ),
             ),
           ),

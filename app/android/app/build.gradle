@@ -44,7 +44,7 @@ android {
     defaultConfig {
         applicationId "com.revium.management"
         minSdkVersion 21
-        targetSdkVersion 34
+        targetSdkVersion 35
         versionCode flutterVersionCode.toInteger()
         versionName flutterVersionName
     }
@@ -52,6 +52,10 @@ android {
     buildTypes {
         release {
             signingConfig signingConfigs.debug
+            // Production optimizasyonları
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
     }
 }
