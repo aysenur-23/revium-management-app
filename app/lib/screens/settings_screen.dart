@@ -469,36 +469,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final theme = Theme.of(context);
 
     return Scaffold(
-      extendBodyBehindAppBar: false,
       appBar: AppBar(
-        toolbarHeight: 110,
+        toolbarHeight: 56,
         automaticallyImplyLeading: true,
-        centerTitle: false,
-        title: Image.asset(
-          'assets/logo_header.png',
-          height: 85,
-          width: 85,
-          fit: BoxFit.contain,
-          errorBuilder: (context, error, stackTrace) {
-            return Icon(
-              Icons.settings_rounded,
-              size: 64,
-              color: theme.colorScheme.primary,
-            );
-          },
+        centerTitle: true,
+        title: Text(
+          'Ayarlar',
+          style: theme.textTheme.titleLarge?.copyWith(
+            fontWeight: FontWeight.w700,
+          ),
         ),
-        titleSpacing: 16,
-        elevation: 1,
+        elevation: 0,
         backgroundColor: theme.colorScheme.surface,
       ),
       body: SafeArea(
-        top: false,
-        bottom: true,
         child: Center(
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 800),
             child: SingleChildScrollView(
-              padding: const EdgeInsets.only(left: 20, right: 20, top: 0, bottom: 20),
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
