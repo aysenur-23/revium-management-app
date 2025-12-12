@@ -13,8 +13,11 @@ class ExpenseEntry {
   final String? notes; // Opsiyonel açıklama
   final double amount;
   final String fileUrl;
-  final String fileType; // "image" veya "pdf"
+  final String fileType; // "image" veya "pdf" (legacy - geriye dönük uyumluluk için)
   final String driveFileId;
+  final String? mimeType; // Gerçek MIME type (application/pdf, image/jpeg, vb.)
+  final String? fileName; // Gerçek dosya adı (dosya.pdf, resim.jpg, vb.)
+  final String? fixedExpenseId; // Bağlı sabit gider ID'si (opsiyonel)
   final DateTime? createdAt;
 
   ExpenseEntry({
@@ -27,6 +30,9 @@ class ExpenseEntry {
     required this.fileUrl,
     required this.fileType,
     required this.driveFileId,
+    this.mimeType,
+    this.fileName,
+    this.fixedExpenseId,
     this.createdAt,
   });
 
@@ -70,6 +76,9 @@ class ExpenseEntry {
       fileUrl: json['fileUrl'] as String? ?? '',
       fileType: json['fileType'] as String? ?? 'image',
       driveFileId: json['driveFileId'] as String? ?? '',
+      mimeType: json['mimeType'] as String?,
+      fileName: json['fileName'] as String?,
+      fixedExpenseId: json['fixedExpenseId'] as String?,
       createdAt: parseCreatedAt(json['createdAt']),
     );
   }
@@ -89,6 +98,15 @@ class ExpenseEntry {
     if (notes != null && notes!.isNotEmpty) {
       map['notes'] = notes!;
     }
+    if (mimeType != null && mimeType!.isNotEmpty) {
+      map['mimeType'] = mimeType!;
+    }
+    if (fileName != null && fileName!.isNotEmpty) {
+      map['fileName'] = fileName!;
+    }
+    if (fixedExpenseId != null && fixedExpenseId!.isNotEmpty) {
+      map['fixedExpenseId'] = fixedExpenseId!;
+    }
     return map;
   }
 
@@ -103,6 +121,9 @@ class ExpenseEntry {
     String? fileUrl,
     String? fileType,
     String? driveFileId,
+    String? mimeType,
+    String? fileName,
+    String? fixedExpenseId,
     DateTime? createdAt,
   }) {
     return ExpenseEntry(
@@ -115,6 +136,9 @@ class ExpenseEntry {
       fileUrl: fileUrl ?? this.fileUrl,
       fileType: fileType ?? this.fileType,
       driveFileId: driveFileId ?? this.driveFileId,
+      mimeType: mimeType ?? this.mimeType,
+      fileName: fileName ?? this.fileName,
+      fixedExpenseId: fixedExpenseId ?? this.fixedExpenseId,
       createdAt: createdAt ?? this.createdAt,
     );
   }

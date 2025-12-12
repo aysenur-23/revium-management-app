@@ -6,16 +6,17 @@
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:file_picker/file_picker.dart';
 import '../home_screen.dart';
 import '../../services/upload_service.dart';
 import '../../services/firestore_service.dart';
 import '../../services/connectivity_service.dart';
-import '../../models/expense_entry.dart';
 import '../../widgets/primary_button.dart';
+import '../../models/fixed_expense.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../utils/app_logger.dart';
-import '../../config/app_config.dart';
 
 class AddEntryTab extends StatefulWidget {
   final UserProfile currentUser;
@@ -38,6 +39,7 @@ class _AddEntryTabState extends State<AddEntryTab> with AutomaticKeepAliveClient
   Uint8List? _selectedFileBytes; // Web için
   String? _selectedFileName;
   bool _isUploading = false;
+  String? _selectedFixedExpenseId; // Seçilen sabit gider ID'si
 
   @override
   bool get wantKeepAlive => true;
@@ -48,6 +50,78 @@ class _AddEntryTabState extends State<AddEntryTab> with AutomaticKeepAliveClient
     _notesController.dispose();
     _amountController.dispose();
     super.dispose();
+  }
+
+  /// Tüm Excel dosyalarını arka planda güncelle (hata olsa bile devam et)
+  Future<void> _updateExcelFileInBackground() async {
+    try {
+      // 1. Tüm entry'leri çek
+      final allEntries = await FirestoreService.getAllEntries();
+      final formattedAllEntries = allEntries.map((entry) {
+        return {
+          'createdAt': entry.createdAt?.toIso8601String() ?? DateTime.now().toIso8601String(),
+          'notes': entry.notes ?? '',
+          'ownerName': entry.ownerName,
+          'amount': entry.amount,
+          'description': entry.description,
+          'fileUrl': entry.fileUrl ?? '',
+        };
+      }).toList();
+
+      // 2. Kullanıcının entry'lerini çek
+      final myEntries = await FirestoreService.getMyEntries(widget.currentUser.userId);
+      final formattedMyEntries = myEntries.map((entry) {
+        return {
+          'createdAt': entry.createdAt?.toIso8601String() ?? DateTime.now().toIso8601String(),
+          'notes': entry.notes ?? '',
+          'ownerName': entry.ownerName,
+          'amount': entry.amount,
+          'description': entry.description,
+          'fileUrl': entry.fileUrl ?? '',
+        };
+      }).toList();
+
+      // 3. Tüm sabit giderleri çek
+      final fixedExpenses = await FirestoreService.getAllFixedExpenses();
+      final formattedFixedExpenses = fixedExpenses.map((expense) {
+        return {
+          'createdAt': expense.createdAt?.toIso8601String() ?? DateTime.now().toIso8601String(),
+          'startDate': expense.startDate?.toIso8601String(),
+          'notes': expense.notes ?? '',
+          'ownerName': expense.ownerName,
+          'amount': expense.amount,
+          'description': expense.description,
+          'category': expense.category ?? '',
+          'recurrence': expense.recurrence ?? '',
+          'isActive': expense.isActive,
+        };
+      }).toList();
+
+      // 4. Tüm Excel dosyalarını paralel olarak güncelle (hata olsa bile devam et)
+      await Future.wait([
+        // Tüm entry'ler Excel'i
+        UploadService.initializeGoogleSheetsWithEntries(formattedAllEntries).catchError((e) {
+          AppLogger.warning('Tüm entry\'ler Excel güncellenirken hata: $e');
+        }),
+        // Kullanıcının entry'leri Excel'i
+        UploadService.createMyEntriesExcel(formattedMyEntries).catchError((e) {
+          AppLogger.warning('Kullanıcı entry\'leri Excel güncellenirken hata: $e');
+        }),
+        // Sabit giderler Excel'i
+        UploadService.initializeGoogleSheetsWithFixedExpenses(formattedFixedExpenses).catchError((e) {
+          AppLogger.warning('Sabit giderler Excel güncellenirken hata: $e');
+        }),
+        // Tüm veriler Excel'i (settings)
+        UploadService.initializeGoogleSheetsWithAllData(formattedAllEntries, formattedFixedExpenses).catchError((e) {
+          AppLogger.warning('Tüm veriler Excel güncellenirken hata: $e');
+        }),
+      ], eagerError: false);
+
+      AppLogger.info('Tüm Excel dosyaları güncellendi (${formattedAllEntries.length} entry, ${formattedFixedExpenses.length} sabit gider)');
+    } catch (e) {
+      // Hata olsa bile sessizce devam et (kullanıcıyı rahatsız etme)
+      AppLogger.warning('Excel dosyaları güncellenirken genel hata: $e');
+    }
   }
 
   Future<void> _pickFile() async {
@@ -61,7 +135,7 @@ class _AddEntryTabState extends State<AddEntryTab> with AutomaticKeepAliveClient
       if (result != null && result.files.isNotEmpty && result.files.single.name.isNotEmpty) {
         final platformFile = result.files.single;
         final fileName = platformFile.name;
-        final fileSize = platformFile.size ?? 0;
+        final fileSize = platformFile.size;
         const maxFileSize = 50 * 1024 * 1024; // 50MB
 
         if (fileSize > maxFileSize) {
@@ -208,15 +282,17 @@ class _AddEntryTabState extends State<AddEntryTab> with AutomaticKeepAliveClient
     }
 
     try {
-      // Miktarı parse et (dosya isimlendirme için)
-      final amountText = _amountController.text.trim().replaceAll(',', '.');
+      // Miktarı parse et (Türkçe format: nokta binlik, virgül ondalık)
+      final amountText = _amountController.text.trim()
+          .replaceAll('.', '') // Binlik ayırıcıları kaldır
+          .replaceAll(',', '.'); // Ondalık ayırıcıyı noktaya çevir
       final amount = double.tryParse(amountText);
       if (amount == null || amount <= 0) {
         throw Exception('Geçersiz miktar. Lütfen geçerli bir sayı girin.');
       }
 
       // Backend'e dosya yükle
-      UploadResult? uploadResult;
+      UploadResult uploadResult;
       try {
         uploadResult = await UploadService.uploadFile(
           file: kIsWeb ? null : _selectedFile,
@@ -243,12 +319,31 @@ class _AddEntryTabState extends State<AddEntryTab> with AutomaticKeepAliveClient
         dialogShown = false;
       }
 
-      if (uploadResult == null) {
-        throw Exception('Dosya yükleme başarısız oldu.');
+      // MIME type ve dosya adını belirle
+      if (_selectedFileName == null || _selectedFileName!.isEmpty) {
+        throw Exception('Dosya adı bulunamadı');
+      }
+      final extension = _selectedFileName!.toLowerCase().split('.').last;
+      String mimeType;
+      if (extension == 'pdf') {
+        mimeType = 'application/pdf';
+      } else if (['jpg', 'jpeg'].contains(extension)) {
+        mimeType = 'image/jpeg';
+      } else if (extension == 'png') {
+        mimeType = 'image/png';
+      } else {
+        mimeType = 'application/octet-stream';
+      }
+      
+      // fileType'ı belirle (legacy uyumluluk için)
+      String fileType;
+      if (extension == 'pdf') {
+        fileType = 'pdf';
+      } else {
+        fileType = 'image';
       }
 
       // ExpenseEntry oluştur
-
       final entry = ExpenseEntry(
         ownerId: widget.currentUser.userId,
         ownerName: widget.currentUser.fullName,
@@ -256,12 +351,18 @@ class _AddEntryTabState extends State<AddEntryTab> with AutomaticKeepAliveClient
         notes: _notesController.text.trim().isEmpty ? null : _notesController.text.trim(),
         amount: amount,
         fileUrl: uploadResult.fileUrl,
-        fileType: _getFileType(_selectedFileName),
+        fileType: fileType,
         driveFileId: uploadResult.fileId,
+        mimeType: mimeType,
+        fileName: _selectedFileName,
+        fixedExpenseId: _selectedFixedExpenseId,
       );
 
       // Firestore'a kaydet
       await FirestoreService.addEntry(entry);
+
+      // Excel dosyasını güncelle (arka planda, hata olsa bile devam et)
+      _updateExcelFileInBackground();
 
       // Formu temizle
       _descriptionController.clear();
@@ -271,6 +372,7 @@ class _AddEntryTabState extends State<AddEntryTab> with AutomaticKeepAliveClient
         _selectedFile = null;
         _selectedFileBytes = null;
         _selectedFileName = null;
+        _selectedFixedExpenseId = null;
       });
 
       if (mounted) {
@@ -281,8 +383,8 @@ class _AddEntryTabState extends State<AddEntryTab> with AutomaticKeepAliveClient
           ),
         );
       }
-    } catch (e) {
-      debugPrint('❌ Kayıt ekleme hatası: $e');
+    } catch (e, stackTrace) {
+      AppLogger.error('Kayıt ekleme hatası', e, stackTrace);
       
       // Hata mesajını hazırla
       final errorMessage = e.toString();
@@ -372,11 +474,11 @@ class _AddEntryTabState extends State<AddEntryTab> with AutomaticKeepAliveClient
           final navigator = Navigator.of(dialogContext, rootNavigator: true);
           if (navigator.canPop()) {
             navigator.pop();
-            debugPrint('✅ Dialog dialogContext ile kapatıldı');
+            AppLogger.debug('Dialog dialogContext ile kapatıldı');
             return;
           }
         } catch (e) {
-          debugPrint('⚠️ Dialog kapatma hatası (dialogContext): $e');
+          AppLogger.warning('Dialog kapatma hatası (dialogContext): $e');
         }
       }
       
@@ -386,21 +488,22 @@ class _AddEntryTabState extends State<AddEntryTab> with AutomaticKeepAliveClient
           final navigator = Navigator.of(context, rootNavigator: true);
           if (navigator.canPop()) {
             navigator.pop();
-            debugPrint('✅ Dialog ana context ile kapatıldı');
+            AppLogger.debug('Dialog ana context ile kapatıldı');
           } else {
-            debugPrint('⚠️ Dialog zaten kapatılmış (canPop false)');
+            AppLogger.warning('Dialog zaten kapatılmış (canPop false)');
           }
         } catch (e) {
-          debugPrint('⚠️ Dialog kapatma hatası (ana context): $e');
+          AppLogger.warning('Dialog kapatma hatası (ana context): $e');
         }
       }
     } catch (e) {
-      debugPrint('❌ Dialog kapatma genel hatası: $e');
+      AppLogger.error('Dialog kapatma genel hatası', e);
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    super.build(context);
     final theme = Theme.of(context);
     final padding = MediaQuery.of(context).size.width < 360 ? 16.0 : 24.0;
     final spacing = MediaQuery.of(context).size.width < 360 ? 20.0 : 24.0;
@@ -412,61 +515,17 @@ class _AddEntryTabState extends State<AddEntryTab> with AutomaticKeepAliveClient
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // Başlık kartı
-            Container(
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                color: theme.colorScheme.primaryContainer.withValues(alpha: 0.4),
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(
-                  color: theme.colorScheme.outline.withValues(alpha: 0.1),
-                  width: 1,
+            // Kompakt başlık
+            Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: Text(
+                'Yeni Harcama Ekle',
+                style: theme.textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w600,
+                  color: theme.colorScheme.onSurface.withValues(alpha: 0.8),
                 ),
               ),
-              child: Row(
-                children: [
-                  Container(
-                    width: 56,
-                    height: 56,
-                    decoration: BoxDecoration(
-                      color: theme.colorScheme.primary.withValues(alpha: 0.2),
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    child: Icon(
-                      Icons.add_circle_outline,
-                      color: theme.colorScheme.primary,
-                      size: 28,
-                    ),
-                  ),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Yeni Harcama Ekle',
-                          style: theme.textTheme.titleLarge?.copyWith(
-                            fontWeight: FontWeight.w700,
-                            color: theme.colorScheme.primary,
-                            fontSize: 20,
-                            letterSpacing: -0.3,
-                          ),
-                        ),
-                        const SizedBox(height: 6),
-                        Text(
-                          'Harcama bilgilerinizi girin',
-                          style: theme.textTheme.bodySmall?.copyWith(
-                            color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
-                            fontSize: 14,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
             ),
-            SizedBox(height: spacing),
             // Harcama Kalemi
             TextFormField(
               controller: _descriptionController,
@@ -475,22 +534,23 @@ class _AddEntryTabState extends State<AddEntryTab> with AutomaticKeepAliveClient
                 hintText: 'Örn: Üretim Maliyeti',
                 prefixIcon: Icon(
                   Icons.description_outlined,
+                  size: 20,
                   color: theme.colorScheme.primary,
                 ),
                 border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(16),
+                  borderRadius: BorderRadius.circular(12),
                   borderSide: BorderSide(
-                    color: theme.colorScheme.outline.withValues(alpha: 0.3),
+                    color: theme.colorScheme.outline.withValues(alpha: 0.2),
                   ),
                 ),
                 enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(16),
+                  borderRadius: BorderRadius.circular(12),
                   borderSide: BorderSide(
-                    color: theme.colorScheme.outline.withValues(alpha: 0.3),
+                    color: theme.colorScheme.outline.withValues(alpha: 0.2),
                   ),
                 ),
                 focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(16),
+                  borderRadius: BorderRadius.circular(12),
                   borderSide: BorderSide(
                     color: theme.colorScheme.primary,
                     width: 2,
@@ -499,8 +559,8 @@ class _AddEntryTabState extends State<AddEntryTab> with AutomaticKeepAliveClient
                 filled: true,
                 fillColor: theme.colorScheme.surface,
                 contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 24,
-                  vertical: 20,
+                  horizontal: 16,
+                  vertical: 16,
                 ),
               ),
               validator: (value) {
@@ -518,31 +578,32 @@ class _AddEntryTabState extends State<AddEntryTab> with AutomaticKeepAliveClient
               enabled: !_isUploading,
               textInputAction: TextInputAction.next,
             ),
-            SizedBox(height: spacing),
+            const SizedBox(height: 16),
             // Miktar
             TextFormField(
               controller: _amountController,
               decoration: InputDecoration(
                 labelText: 'Miktar (₺)',
-                hintText: 'Örn: 125.50',
+                hintText: 'Örn: 1.234,56',
                 prefixIcon: Icon(
                   Icons.account_balance_wallet_outlined,
+                  size: 20,
                   color: theme.colorScheme.primary,
                 ),
                 border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(16),
+                  borderRadius: BorderRadius.circular(12),
                   borderSide: BorderSide(
-                    color: theme.colorScheme.outline.withValues(alpha: 0.3),
+                    color: theme.colorScheme.outline.withValues(alpha: 0.2),
                   ),
                 ),
                 enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(16),
+                  borderRadius: BorderRadius.circular(12),
                   borderSide: BorderSide(
-                    color: theme.colorScheme.outline.withValues(alpha: 0.3),
+                    color: theme.colorScheme.outline.withValues(alpha: 0.2),
                   ),
                 ),
                 focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(16),
+                  borderRadius: BorderRadius.circular(12),
                   borderSide: BorderSide(
                     color: theme.colorScheme.primary,
                     width: 2,
@@ -551,32 +612,162 @@ class _AddEntryTabState extends State<AddEntryTab> with AutomaticKeepAliveClient
                 filled: true,
                 fillColor: theme.colorScheme.surface,
                 contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 24,
-                  vertical: 20,
+                  horizontal: 16,
+                  vertical: 16,
                 ),
               ),
-              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              keyboardType: TextInputType.text,
+              inputFormatters: [
+                _TurkishNumberInputFormatter(),
+              ],
               validator: (value) {
                 if (value == null || value.trim().isEmpty) {
                   return 'Lütfen miktar giriniz';
                 }
-                final cleanedValue = value.trim().replaceAll(',', '.');
+                // Türkçe format: nokta binlik ayırıcı, virgül ondalık ayırıcı
+                // Parse için: noktaları kaldır, virgülü noktaya çevir
+                final cleanedValue = value.trim()
+                    .replaceAll('.', '') // Binlik ayırıcıları kaldır
+                    .replaceAll(',', '.'); // Ondalık ayırıcıyı noktaya çevir
                 final amount = double.tryParse(cleanedValue);
                 if (amount == null) {
-                  return 'Geçerli bir sayı giriniz (örn: 125.50)';
+                  return 'Geçerli bir sayı giriniz (örn: 1.234,56)';
                 }
                 if (amount <= 0) {
                   return 'Miktar 0\'dan büyük olmalıdır';
                 }
                 if (amount > 999999999) {
-                  return 'Miktar çok büyük (maksimum: 999,999,999)';
+                  return 'Miktar çok büyük (maksimum: 999.999.999,99)';
                 }
                 return null;
               },
               enabled: !_isUploading,
               textInputAction: TextInputAction.next,
             ),
-            SizedBox(height: spacing),
+            const SizedBox(height: 16),
+            // Sabit Gider Seçimi (Opsiyonel)
+            StreamBuilder<List<FixedExpense>>(
+              stream: FirestoreService.streamAllFixedExpenses(),
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const SizedBox.shrink();
+                }
+                
+                final fixedExpenses = snapshot.data ?? [];
+                final activeExpenses = fixedExpenses.where((e) => e.isActive).toList();
+                
+                if (activeExpenses.isEmpty) {
+                  return const SizedBox.shrink();
+                }
+                
+                return DropdownButtonFormField<String>(
+                  value: _selectedFixedExpenseId,
+                  decoration: InputDecoration(
+                    labelText: 'Sabit Gider (Opsiyonel)',
+                    hintText: 'Bir sabit gidere bağla',
+                    prefixIcon: Icon(
+                      Icons.receipt_long_rounded,
+                      size: 20,
+                      color: theme.colorScheme.primary,
+                    ),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(
+                        color: theme.colorScheme.outline.withValues(alpha: 0.2),
+                      ),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(
+                        color: theme.colorScheme.outline.withValues(alpha: 0.2),
+                      ),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(
+                        color: theme.colorScheme.primary,
+                        width: 2,
+                      ),
+                    ),
+                    filled: true,
+                    fillColor: theme.colorScheme.surface,
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 16,
+                    ),
+                  ),
+                  items: [
+                    const DropdownMenuItem<String>(
+                      value: null,
+                      child: Text('Sabit gidere bağlama'),
+                    ),
+                    ...activeExpenses.map((expense) {
+                      return DropdownMenuItem<String>(
+                        value: expense.id,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              expense.description,
+                              style: theme.textTheme.bodyMedium?.copyWith(
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            if (expense.category != null)
+                              Text(
+                                expense.category!,
+                                style: theme.textTheme.bodySmall?.copyWith(
+                                  color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
+                                ),
+                              ),
+                          ],
+                        ),
+                      );
+                    }),
+                  ],
+                  onChanged: _isUploading
+                      ? null
+                      : (value) {
+                          setState(() {
+                            _selectedFixedExpenseId = value;
+                            
+                            // Sabit gider seçildiyse, bilgilerini otomatik doldur
+                            if (value != null) {
+                              final selectedExpense = activeExpenses.firstWhere(
+                                (e) => e.id == value,
+                                orElse: () => activeExpenses.first,
+                              );
+                              
+                              // Miktarı Türkçe formatta doldur
+                              final amountText = selectedExpense.amount.toStringAsFixed(2)
+                                  .replaceAll('.', ',')
+                                  .replaceAllMapped(
+                                    RegExp(r'(\d)(?=(\d{3})+(?!\d))'),
+                                    (match) => '${match.group(1)}.',
+                                  );
+                              _amountController.text = amountText;
+                              
+                              // Açıklama alanını doldur (eğer boşsa)
+                              if (_descriptionController.text.trim().isEmpty) {
+                                _descriptionController.text = selectedExpense.description;
+                              }
+                              
+                              // Notlar alanını doldur (eğer boşsa ve sabit giderde not varsa)
+                              if (_notesController.text.trim().isEmpty && 
+                                  selectedExpense.notes != null && 
+                                  selectedExpense.notes!.isNotEmpty) {
+                                _notesController.text = selectedExpense.notes!;
+                              }
+                            } else {
+                              // Sabit gider seçimi kaldırıldıysa, alanları temizleme (kullanıcı manuel doldurmuş olabilir)
+                            }
+                          });
+                        },
+                );
+              },
+            ),
+            const SizedBox(height: 16),
             // Açıklama (Opsiyonel)
             TextFormField(
               controller: _notesController,
@@ -585,22 +776,23 @@ class _AddEntryTabState extends State<AddEntryTab> with AutomaticKeepAliveClient
                 hintText: 'Ek bilgi veya notlar',
                 prefixIcon: Icon(
                   Icons.note_outlined,
+                  size: 20,
                   color: theme.colorScheme.primary,
                 ),
                 border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(16),
+                  borderRadius: BorderRadius.circular(12),
                   borderSide: BorderSide(
-                    color: theme.colorScheme.outline.withValues(alpha: 0.3),
+                    color: theme.colorScheme.outline.withValues(alpha: 0.2),
                   ),
                 ),
                 enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(16),
+                  borderRadius: BorderRadius.circular(12),
                   borderSide: BorderSide(
-                    color: theme.colorScheme.outline.withValues(alpha: 0.3),
+                    color: theme.colorScheme.outline.withValues(alpha: 0.2),
                   ),
                 ),
                 focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(16),
+                  borderRadius: BorderRadius.circular(12),
                   borderSide: BorderSide(
                     color: theme.colorScheme.primary,
                     width: 2,
@@ -609,27 +801,27 @@ class _AddEntryTabState extends State<AddEntryTab> with AutomaticKeepAliveClient
                 filled: true,
                 fillColor: theme.colorScheme.surface,
                 contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 24,
-                  vertical: 20,
+                  horizontal: 16,
+                  vertical: 16,
                 ),
               ),
               maxLines: 3,
               enabled: !_isUploading,
               textInputAction: TextInputAction.next,
             ),
-            SizedBox(height: spacing),
+            const SizedBox(height: 16),
             // Dosya Seç butonu
             OutlinedButton.icon(
               onPressed: _isUploading ? null : _pickFile,
-              icon: const Icon(Icons.attach_file),
+              icon: const Icon(Icons.attach_file, size: 20),
               label: const Text(
                 'Dosya Seç',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
+                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
               ),
               style: OutlinedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(vertical: 20),
+                padding: const EdgeInsets.symmetric(vertical: 16),
                 shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(16),
+                  borderRadius: BorderRadius.circular(12),
                 ),
                 side: BorderSide(
                   color: theme.colorScheme.primary.withValues(alpha: 0.5),
@@ -834,6 +1026,100 @@ class _AddEntryTabState extends State<AddEntryTab> with AutomaticKeepAliveClient
           ],
         ),
       ),
+    );
+  }
+}
+
+// Türkçe sayı formatı için input formatter
+// Binlik ayırıcı: nokta (.), ondalık ayırıcı: virgül (,)
+class _TurkishNumberInputFormatter extends TextInputFormatter {
+  @override
+  TextEditingValue formatEditUpdate(
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) {
+    if (newValue.text.isEmpty) {
+      return newValue;
+    }
+
+    // Sadece rakam, nokta ve virgül kabul et
+    String text = newValue.text.replaceAll(RegExp(r'[^\d.,]'), '');
+    
+    // Virgül sadece bir kez olabilir (ondalık ayırıcı)
+    final commaCount = text.split(',').length - 1;
+    if (commaCount > 1) {
+      return oldValue;
+    }
+    
+    // Virgülden sonra maksimum 2 rakam
+    if (text.contains(',')) {
+      final parts = text.split(',');
+      if (parts.length == 2 && parts[1].length > 2) {
+        return oldValue;
+      }
+    }
+    
+    // Noktalar sadece binlik ayırıcı olarak kullanılabilir (virgülden önce)
+    String formatted = text;
+    if (text.contains(',')) {
+      final parts = text.split(',');
+      final integerPart = parts[0].replaceAll('.', '');
+      final decimalPart = parts[1];
+      
+      // Binlik ayırıcıları ekle (sağdan sola 3'er 3'er)
+      String formattedInteger = '';
+      for (int i = integerPart.length - 1; i >= 0; i--) {
+        formattedInteger = integerPart[i] + formattedInteger;
+        if ((integerPart.length - i) % 3 == 0 && i > 0) {
+          formattedInteger = '.' + formattedInteger;
+        }
+      }
+      
+      formatted = formattedInteger + ',' + decimalPart;
+    } else {
+      // Virgül yoksa, sadece binlik ayırıcıları ekle
+      final integerPart = text.replaceAll('.', '');
+      String formattedInteger = '';
+      for (int i = integerPart.length - 1; i >= 0; i--) {
+        formattedInteger = integerPart[i] + formattedInteger;
+        if ((integerPart.length - i) % 3 == 0 && i > 0) {
+          formattedInteger = '.' + formattedInteger;
+        }
+      }
+      formatted = formattedInteger;
+    }
+    
+    // Cursor pozisyonunu hesapla (formatlamadan sonra)
+    int cursorPosition = formatted.length;
+    if (newValue.selection.baseOffset <= oldValue.text.length) {
+      // Eski pozisyonu korumaya çalış
+      final oldText = oldValue.text;
+      final newText = formatted;
+      final offset = newValue.selection.baseOffset;
+      
+      if (offset <= oldText.length) {
+        // Formatlamadan önceki karakter sayısını hesapla
+        final charsBeforeCursor = oldText.substring(0, offset).replaceAll(RegExp(r'[^\d]'), '').length;
+        
+        // Formatlamadan sonra aynı sayıda karaktere kadar cursor'ı ayarla
+        int count = 0;
+        cursorPosition = 0;
+        for (int i = 0; i < newText.length && count < charsBeforeCursor; i++) {
+          if (RegExp(r'\d').hasMatch(newText[i])) {
+            count++;
+          }
+          cursorPosition = i + 1;
+        }
+      }
+    }
+    
+    if (cursorPosition > formatted.length) {
+      cursorPosition = formatted.length;
+    }
+    
+    return TextEditingValue(
+      text: formatted,
+      selection: TextSelection.collapsed(offset: cursorPosition),
     );
   }
 }

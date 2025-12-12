@@ -1,9 +1,5 @@
-/**
- * Uygulama yapılandırma dosyası
- * Production ve development için farklı ayarlar
- */
-
-import 'package:flutter/foundation.dart';
+/// Uygulama yapılandırma dosyası
+/// Production ve development için farklı ayarlar
 
 class AppConfig {
   // Supabase Configuration
@@ -26,10 +22,11 @@ class AppConfig {
   static const List<String> allowedFileExtensions = ['jpg', 'jpeg', 'png', 'pdf'];
 
   // Performance Configuration
-  static const int listViewCacheExtent = 500;
+  static const int listViewCacheExtent = 250; // Optimize edildi - daha az bellek kullanımı
   static const int imageCacheWidth = 140; // 2x for retina
   static const int imageCacheHeight = 140;
   static const int maxImageCacheSize = 100; // MB
+  static const int searchDebounceMs = 300; // Arama debounce süresi
 
   // Firestore Configuration
   static const int firestoreTimeoutSeconds = 10;

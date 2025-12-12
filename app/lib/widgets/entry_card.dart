@@ -1,13 +1,19 @@
-/**
- * Harcama kaydı kartı widget'ı
- * Entry bilgilerini gösterir ve tıklanabilir
- */
-
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:http/http.dart' as http;
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
+import 'package:open_file/open_file.dart';
+import 'dart:io';
+import 'dart:async';
+import 'dart:typed_data';
 import '../models/expense_entry.dart';
+import '../models/app_file_reference.dart';
+import '../utils/app_logger.dart';
+import '../services/upload_service.dart';
+import '../services/file_opener/file_open_service.dart';
 
 class EntryCard extends StatefulWidget {
   final ExpenseEntry entry;
@@ -29,19 +35,15 @@ class _EntryCardState extends State<EntryCard> {
   bool _showDetails = false; // Detaylar gösteriliyor mu?
 
   void _handleTap() {
-    if (!_showDetails) {
-      // İlk tıklama: Detayları göster
-      setState(() {
-        _showDetails = true;
-      });
-    } else {
-      // İkinci tıklama: Dosyayı aç
-      _openFile(context);
-      // Detayları kapat
-      setState(() {
-        _showDetails = false;
-      });
-    }
+    // Kartta tıklayınca direkt dosyayı aç
+    _openFile(context);
+  }
+  
+  void _handleLongPress() {
+    // Uzun basınca detayları göster/gizle
+    setState(() {
+      _showDetails = !_showDetails;
+    });
   }
 
   @override
@@ -56,47 +58,38 @@ class _EntryCardState extends State<EntryCard> {
       dateFormat = DateFormat('dd.MM.yyyy HH:mm');
     }
 
-    return TweenAnimationBuilder<double>(
-      tween: Tween(begin: 0.0, end: 1.0),
-      duration: const Duration(milliseconds: 300),
-      curve: Curves.easeOut,
-      builder: (context, value, child) {
-        return Opacity(
-          opacity: value,
-          child: Transform.scale(
-            scale: 0.95 + (value * 0.05),
-            child: child,
-          ),
-        );
-      },
+    return RepaintBoundary(
       child: Container(
-        margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         decoration: BoxDecoration(
           color: theme.colorScheme.surface,
-          borderRadius: BorderRadius.circular(20),
+          borderRadius: BorderRadius.circular(16),
           border: Border.all(
-            color: theme.colorScheme.outline.withValues(alpha: 0.1),
+            color: theme.colorScheme.outline.withValues(alpha: 0.08),
             width: 1,
           ),
           boxShadow: [
             BoxShadow(
-              color: theme.colorScheme.shadow.withValues(alpha: 0.08),
-              blurRadius: 8,
-              offset: const Offset(0, 2),
+              color: theme.colorScheme.shadow.withValues(alpha: 0.05),
+              blurRadius: 4,
+              offset: const Offset(0, 1),
               spreadRadius: 0,
             ),
           ],
         ),
-        child: Material(
-          color: Colors.transparent,
-          child: InkWell(
-            onTap: _handleTap,
-            borderRadius: BorderRadius.circular(20),
-            splashColor: theme.colorScheme.primary.withValues(alpha: 0.1),
-            highlightColor: theme.colorScheme.primary.withValues(alpha: 0.05),
-            child: Padding(
-              padding: const EdgeInsets.all(24),
-              child: Column(
+        child: Stack(
+          children: [
+            Material(
+              color: Colors.transparent,
+              child: InkWell(
+                onTap: _handleTap,
+                onLongPress: _handleLongPress,
+                borderRadius: BorderRadius.circular(16),
+                splashColor: theme.colorScheme.primary.withValues(alpha: 0.1),
+                highlightColor: theme.colorScheme.primary.withValues(alpha: 0.05),
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -104,160 +97,142 @@ class _EntryCardState extends State<EntryCard> {
                   Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      // Dosya tipi ikonu
+                      // Dosya tipi ikonu - kompakt boyut
                       Container(
-                        width: 56,
-                        height: 56,
+                        width: 48,
+                        height: 48,
                         decoration: BoxDecoration(
-                          color: theme.colorScheme.primaryContainer.withValues(alpha: 0.4),
-                          borderRadius: BorderRadius.circular(16),
+                          color: theme.colorScheme.primaryContainer.withValues(alpha: 0.3),
+                          borderRadius: BorderRadius.circular(12),
                         ),
                         child: Icon(
                           widget.entry.fileType == 'pdf'
                               ? Icons.picture_as_pdf_rounded
                               : Icons.image_rounded,
                           color: theme.colorScheme.primary,
-                          size: 28,
+                          size: 24,
                         ),
                       ),
-                      const SizedBox(width: 20),
-                      // Açıklama ve tarih - Expanded ile overflow önleniyor
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(
-                              widget.entry.description,
-                              style: theme.textTheme.titleMedium?.copyWith(
-                                fontWeight: FontWeight.w700,
-                                fontSize: 18,
-                                letterSpacing: -0.4,
-                                height: 1.35,
+                      const SizedBox(width: 12),
+                    // Açıklama ve tarih - Expanded ile overflow önleniyor
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            widget.entry.description,
+                            style: theme.textTheme.titleMedium?.copyWith(
+                              fontWeight: FontWeight.w600,
+                              fontSize: 15,
+                              letterSpacing: -0.2,
+                              height: 1.3,
+                            ),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          const SizedBox(height: 4),
+                          // Tarih ve kişi - tek satırda, daha kompakt
+                          Wrap(
+                            spacing: 12,
+                            runSpacing: 4,
+                            children: [
+                              Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    Icons.calendar_today_rounded,
+                                    size: 12,
+                                    color: theme.colorScheme.onSurface.withValues(alpha: 0.5),
+                                  ),
+                                  const SizedBox(width: 4),
+                                  Flexible(
+                                    child: Text(
+                                      widget.entry.createdAt != null
+                                          ? DateFormat('dd.MM.yyyy', kIsWeb ? null : 'tr_TR').format(widget.entry.createdAt!)
+                                          : 'Tarih yok',
+                                      style: theme.textTheme.bodySmall?.copyWith(
+                                        color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w500,
+                                      ),
+                                      overflow: TextOverflow.ellipsis,
+                                      maxLines: 1,
+                                    ),
+                                  ),
+                                ],
                               ),
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            const SizedBox(height: 10),
-                            Row(
-                              children: [
-                                Icon(
-                                  Icons.calendar_today_rounded,
-                                  size: 14,
-                                  color: theme.colorScheme.onSurface.withValues(alpha: 0.5),
-                                ),
-                                const SizedBox(width: 6),
-                                Flexible(
-                                  child: Text(
-                                    DateFormat('dd.MM.yyyy', kIsWeb ? null : 'tr_TR').format(widget.entry.createdAt ?? DateTime.now()),
-                                    style: theme.textTheme.bodySmall?.copyWith(
-                                      color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.w500,
-                                    ),
-                                    overflow: TextOverflow.ellipsis,
+                              Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    Icons.person_outline_rounded,
+                                    size: 12,
+                                    color: theme.colorScheme.onSurface.withValues(alpha: 0.5),
                                   ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 6),
-                            Row(
-                              children: [
-                                Icon(
-                                  Icons.person_outline_rounded,
-                                  size: 14,
-                                  color: theme.colorScheme.onSurface.withValues(alpha: 0.5),
-                                ),
-                                const SizedBox(width: 6),
-                                Flexible(
-                                  child: Text(
-                                    widget.entry.ownerName,
-                                    style: theme.textTheme.bodySmall?.copyWith(
-                                      color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.w500,
+                                  const SizedBox(width: 4),
+                                  Flexible(
+                                    child: Text(
+                                      widget.entry.ownerName,
+                                      style: theme.textTheme.bodySmall?.copyWith(
+                                        color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w500,
+                                      ),
+                                      overflow: TextOverflow.ellipsis,
+                                      maxLines: 1,
                                     ),
-                                    overflow: TextOverflow.ellipsis,
                                   ),
-                                ),
-                              ],
-                            ),
-                          ],
-                        ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ],
                       ),
-                      const SizedBox(width: 16),
-                      // Miktar badge - sabit genişlik
-                      Container(
-                        constraints: const BoxConstraints(minWidth: 90),
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 18,
-                          vertical: 14,
-                        ),
-                        decoration: BoxDecoration(
-                          color: theme.colorScheme.primaryContainer,
-                          borderRadius: BorderRadius.circular(14),
-                        ),
+                    ),
+                    const SizedBox(width: 8),
+                    // Miktar badge - kompakt
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 6,
+                      ),
+                      decoration: BoxDecoration(
+                        color: theme.colorScheme.primaryContainer,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        alignment: Alignment.center,
                         child: Text(
                           NumberFormat.currency(
                             symbol: '₺',
                             decimalDigits: 0,
+                            locale: 'tr_TR',
                           ).format(widget.entry.amount),
-                          style: theme.textTheme.titleMedium?.copyWith(
+                          style: theme.textTheme.bodySmall?.copyWith(
                             color: theme.colorScheme.onPrimaryContainer,
-                            fontWeight: FontWeight.w800,
-                            fontSize: 17,
-                            letterSpacing: 0.4,
+                            fontWeight: FontWeight.w700,
+                            fontSize: 13,
+                            letterSpacing: 0,
                           ),
                           textAlign: TextAlign.center,
+                          maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
                       ),
-                      // Silme butonu - sadece onDelete varsa
-                      if (widget.onDelete != null) ...[
-                        const SizedBox(width: 8),
-                        PopupMenuButton<String>(
-                          icon: Icon(
-                            Icons.more_vert,
-                            color: theme.colorScheme.onSurface.withValues(alpha: 0.5),
-                            size: 20,
-                          ),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          onSelected: (value) {
-                            if (value == 'delete' && widget.onDelete != null) {
-                              widget.onDelete!();
-                            }
-                          },
-                          itemBuilder: (context) => [
-                            PopupMenuItem<String>(
-                              value: 'delete',
-                              child: Row(
-                                children: [
-                                  Icon(
-                                    Icons.delete_outline,
-                                    color: Colors.red,
-                                    size: 20,
-                                  ),
-                                  const SizedBox(width: 12),
-                                  const Text('Sil'),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
+                    ),
                     ],
                   ),
                   // Detaylı bilgiler - sadece _showDetails true ise göster
                   if (_showDetails) ...[
-                    const SizedBox(height: 20),
+                    const SizedBox(height: 12),
                     Divider(
                       height: 1,
                       thickness: 1,
-                      color: theme.colorScheme.outline.withValues(alpha: 0.1),
+                      color: theme.colorScheme.outline.withValues(alpha: 0.08),
                     ),
-                    const SizedBox(height: 16),
+                    const SizedBox(height: 12),
                     // Tarih/Saat detayı
                     if (widget.entry.createdAt != null)
                       _DetailRow(
@@ -277,38 +252,28 @@ class _EntryCardState extends State<EntryCard> {
                         maxLines: 3,
                       ),
                     ],
-                    // Yükleyen - sadece showOwnerIcon true ise göster
-                    if (widget.showOwnerIcon) ...[
-                      const SizedBox(height: 12),
-                      _DetailRow(
-                        icon: Icons.person_rounded,
-                        label: 'Yükleyen',
-                        value: widget.entry.ownerName,
-                        iconColor: theme.colorScheme.tertiary,
-                      ),
-                    ],
                     // Bilgilendirme mesajı
-                    const SizedBox(height: 16),
+                    const SizedBox(height: 12),
                     Container(
-                      padding: const EdgeInsets.all(12),
+                      padding: const EdgeInsets.all(10),
                       decoration: BoxDecoration(
-                        color: theme.colorScheme.primaryContainer.withValues(alpha: 0.3),
-                        borderRadius: BorderRadius.circular(12),
+                        color: theme.colorScheme.primaryContainer.withValues(alpha: 0.2),
+                        borderRadius: BorderRadius.circular(10),
                       ),
                       child: Row(
                         children: [
                           Icon(
                             Icons.info_outline_rounded,
-                            size: 18,
+                            size: 16,
                             color: theme.colorScheme.primary,
                           ),
-                          const SizedBox(width: 10),
+                          const SizedBox(width: 8),
                           Expanded(
                             child: Text(
-                              'Tekrar tıklayarak belgeyi açabilirsiniz',
+                              'Karta tıklayarak belgeyi açabilirsiniz',
                               style: theme.textTheme.bodySmall?.copyWith(
                                 color: theme.colorScheme.primary,
-                                fontSize: 12,
+                                fontSize: 11,
                                 fontWeight: FontWeight.w500,
                               ),
                             ),
@@ -321,34 +286,83 @@ class _EntryCardState extends State<EntryCard> {
               ),
             ),
           ),
+            ),
+            // Silme butonu - Stack'in üstünde, sağ üst köşede
+            if (widget.onDelete != null)
+              Positioned(
+                top: 8,
+                right: 8,
+                child: PopupMenuButton<String>(
+                  icon: Icon(
+                    Icons.more_vert,
+                    color: theme.colorScheme.onSurface.withValues(alpha: 0.5),
+                    size: 20,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  onSelected: (value) {
+                    if (value == 'delete' && widget.onDelete != null) {
+                      widget.onDelete!();
+                    }
+                  },
+                  itemBuilder: (context) => const [
+                    PopupMenuItem<String>(
+                      value: 'delete',
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.delete_outline,
+                            color: Colors.red,
+                            size: 20,
+                          ),
+                          SizedBox(width: 12),
+                          Text('Sil'),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+          ],
         ),
       ),
     );
   }
 
-  /// Dosyayı tarayıcıda açar
+  /// Google Drive URL'den File ID çıkarır
+  String? _extractFileIdFromUrl(String url) {
+    if (url.isEmpty) return null;
+    
+    // Format 1: /file/d/FILE_ID/view veya /file/d/FILE_ID
+    final fileIdMatch1 = RegExp(r'/file/d/([a-zA-Z0-9_-]+)').firstMatch(url);
+    if (fileIdMatch1 != null) {
+      return fileIdMatch1.group(1);
+    }
+    
+    // Format 2: id=FILE_ID
+    final fileIdMatch2 = RegExp(r'[?&]id=([a-zA-Z0-9_-]+)').firstMatch(url);
+    if (fileIdMatch2 != null) {
+      return fileIdMatch2.group(1);
+    }
+    
+    return null;
+  }
+
+  /// Dosyayı açar (yeni modüler servis kullanarak)
   Future<void> _openFile(BuildContext context) async {
     try {
-      if (widget.entry.fileUrl.isEmpty) {
-        if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Dosya URL\'i bulunamadı'),
-              backgroundColor: Colors.orange,
-            ),
-          );
-        }
-        return;
-      }
-
-      final uri = Uri.parse(widget.entry.fileUrl);
+      AppLogger.info('📄 Dosya açma işlemi başlatıldı');
+      AppLogger.debug('Dosya tipi: ${widget.entry.fileType}');
+      AppLogger.debug('Dosya URL: ${widget.entry.fileUrl}');
+      AppLogger.debug('Drive File ID: ${widget.entry.driveFileId}');
       
-      // URL'in geçerli olduğunu kontrol et
-      if (!uri.hasScheme || (!uri.scheme.startsWith('http'))) {
+      if (widget.entry.fileUrl.isEmpty) {
+        AppLogger.warning('Dosya URL\'i boş');
         if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text('Geçersiz dosya URL\'i'),
+              content: Text('Dosya bilgisi bulunamadı'),
               backgroundColor: Colors.orange,
             ),
           );
@@ -356,33 +370,124 @@ class _EntryCardState extends State<EntryCard> {
         return;
       }
 
-      // URL'i açmayı dene
-      final canLaunch = await canLaunchUrl(uri);
-      if (canLaunch) {
-        await launchUrl(uri, mode: LaunchMode.externalApplication);
-      } else {
+      // File ID'yi belirle (driveFileId varsa onu kullan, yoksa URL'den çıkar)
+      String? fileId = widget.entry.driveFileId.isNotEmpty 
+          ? widget.entry.driveFileId 
+          : _extractFileIdFromUrl(widget.entry.fileUrl);
+      
+      if (fileId == null || fileId.isEmpty) {
+        AppLogger.warning('File ID bulunamadı (URL: ${widget.entry.fileUrl})');
+        // Son çare: URL'i direkt aç
+        try {
+          final uri = Uri.parse(widget.entry.fileUrl);
+          if (await canLaunchUrl(uri)) {
+            await launchUrl(uri, mode: LaunchMode.externalApplication);
+            AppLogger.info('Dosya URL direkt açıldı');
+            return;
+          }
+        } catch (e) {
+          AppLogger.error('URL açma hatası', e);
+        }
+        
         if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Dosya açılamadı: ${widget.entry.fileUrl}'),
-              backgroundColor: Colors.red,
-              duration: const Duration(seconds: 3),
+            const SnackBar(
+              content: Text('Dosya bilgisi bulunamadı'),
+              backgroundColor: Colors.orange,
             ),
           );
         }
+        return;
+      }
+
+      AppLogger.debug('Kullanılacak File ID: $fileId');
+      AppLogger.info('📎 Entry ID: ${widget.entry.id}');
+      AppLogger.info('📎 Entry Açıklama: ${widget.entry.description}');
+      AppLogger.info('📎 Entry Tutar: ${widget.entry.amount}');
+
+      // Loading göster
+      if (context.mounted) {
+        showDialog(
+          context: context,
+          barrierDismissible: false,
+          builder: (context) => Center(
+            child: Card(
+              child: Padding(
+                padding: const EdgeInsets.all(20),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const CircularProgressIndicator(),
+                    const SizedBox(height: 16),
+                    const Text('Dosya yükleniyor...'),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      }
+
+      // AppFileReference oluştur (fileId'yi kullan)
+      final fileRef = AppFileReference.fromExpenseEntry(
+        entryId: widget.entry.id ?? '',
+        driveFileId: fileId, // Çıkarılan veya mevcut fileId
+        fileUrl: widget.entry.fileUrl,
+        fileType: widget.entry.fileType,
+        ownerId: widget.entry.ownerId,
+        mimeType: widget.entry.mimeType, // Yeni alan
+        fileName: widget.entry.fileName, // Yeni alan
+      );
+
+      AppLogger.info('📎 Oluşturulan FileRef:');
+      AppLogger.info('   - ID: ${fileRef.id}');
+      AppLogger.info('   - Drive File ID: ${fileRef.driveFileId}');
+      AppLogger.info('   - Name: ${fileRef.name}');
+      AppLogger.info('   - MIME Type: ${fileRef.mimeType}');
+      AppLogger.info('   - File Type Category: ${fileRef.fileTypeCategory}');
+
+      // Yeni modüler servis ile aç
+      await FileOpenService.openOrDownloadAndOpen(fileRef);
+
+      // Loading'i kapat
+      if (context.mounted) {
+        Navigator.of(context).pop();
       }
     } catch (e) {
+      AppLogger.error('Dosya açma hatası', e);
+      // Loading'i kapat
       if (context.mounted) {
+        Navigator.of(context).pop();
+        
+        // Kullanıcıya açıklayıcı hata mesajı göster
+        String errorMessage = 'Dosya açılamadı';
+        final errorString = e.toString().toLowerCase();
+        
+        if (errorString.contains('timeout') || errorString.contains('zaman aşımı')) {
+          errorMessage = 'Dosya yüklenirken zaman aşımı oluştu. İnternet bağlantınızı kontrol edip tekrar deneyin.';
+        } else if (errorString.contains('connection') || errorString.contains('bağlanılamadı')) {
+          errorMessage = 'Backend sunucusuna bağlanılamıyor. İnternet bağlantınızı kontrol edin.';
+        } else if (errorString.contains('404') || errorString.contains('not found')) {
+          errorMessage = 'Dosya bulunamadı. Dosya silinmiş olabilir.';
+        } else if (errorString.contains('401') || errorString.contains('403') || errorString.contains('unauthorized')) {
+          errorMessage = 'Yetkilendirme hatası. Lütfen tekrar giriş yapın.';
+        } else {
+          errorMessage = 'Dosya açılamadı: ${e.toString().length > 100 ? e.toString().substring(0, 100) + "..." : e.toString()}';
+        }
+        
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Dosya açma hatası: ${e.toString()}'),
+            content: Text(errorMessage),
             backgroundColor: Colors.red,
-            duration: const Duration(seconds: 3),
+            duration: const Duration(seconds: 4),
           ),
         );
       }
     }
   }
+
+
+
 }
 
 /// Detay satırı widget'ı

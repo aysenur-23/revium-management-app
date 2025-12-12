@@ -1,6 +1,6 @@
 /**
  * Ana ekran
- * 3 sekmeli yapı (Ekleme, Eklediklerim, Tüm Eklenenler)
+ * 4 sekmeli yapı (Ekleme, Eklediklerim, Tüm Eklenenler, Sabit Giderler)
  */
 
 import 'package:flutter/material.dart';
@@ -11,6 +11,7 @@ import '../models/user_profile.dart';
 import 'tabs/add_entry_tab.dart';
 import 'tabs/my_entries_tab.dart';
 import 'tabs/all_entries_tab.dart';
+import 'tabs/fixed_expenses_tab.dart';
 
 // UserProfile'ı export et (tab'lar için)
 export '../models/user_profile.dart';
@@ -32,7 +33,7 @@ class _HomeScreenState extends State<HomeScreen>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 3, vsync: this);
+    _tabController = TabController(length: 4, vsync: this);
     _loadUser();
   }
 
@@ -222,63 +223,40 @@ class _HomeScreenState extends State<HomeScreen>
     
     return Scaffold(
       backgroundColor: isDark ? const Color(0xFF0F172A) : const Color(0xFFF8FAFC),
+      extendBodyBehindAppBar: false,
       appBar: AppBar(
-        toolbarHeight: 72,
-        title: LayoutBuilder(
-          builder: (context, constraints) {
-            final showFullTitle = constraints.maxWidth > 400;
-            return Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                // Logo - optimize edilmiş boyut
-                Image.asset(
-                  'assets/logo_header.png',
-                  height: 64,
-                  width: 64,
-                  fit: BoxFit.contain,
-                  errorBuilder: (context, error, stackTrace) {
-                    return Icon(
-                      Icons.receipt_long_rounded,
-                      size: 64,
-                      color: theme.colorScheme.primary,
-                    );
-                  },
-                ),
-                if (showFullTitle) ...[
-                  const SizedBox(width: 16),
-                  Flexible(
-                    child: Text(
-                      'Harcama Takibi',
-                      style: theme.textTheme.titleLarge?.copyWith(
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: -0.5,
-                      ),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                ],
-              ],
+        toolbarHeight: 110,
+        systemOverlayStyle: null,
+        centerTitle: false,
+        title: Image.asset(
+          'assets/logo_header.png',
+          height: 85,
+          width: 85,
+          fit: BoxFit.contain,
+          errorBuilder: (context, error, stackTrace) {
+            return Icon(
+              Icons.receipt_long_rounded,
+              size: 64,
+              color: theme.colorScheme.primary,
             );
           },
         ),
+        titleSpacing: 16,
         elevation: 0,
         actions: [
-          // İstatistikler butonu
-          Container(
-            margin: const EdgeInsets.only(right: 12),
-            decoration: BoxDecoration(
-              color: theme.colorScheme.primaryContainer.withValues(alpha: 0.3),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: IconButton(
-              icon: const Icon(Icons.bar_chart_rounded, size: 22),
-              onPressed: _currentUser != null ? () {
-                try {
-                  Navigator.of(context).pushNamed(
-                    '/statistics',
-                    arguments: _currentUser,
-                  );
-                } catch (e) {
+          IconButton(
+            icon: const Icon(Icons.bar_chart_rounded, size: 22),
+            onPressed: _currentUser != null ? () async {
+              try {
+                final result = await Navigator.of(context).pushNamed(
+                  '/statistics',
+                  arguments: _currentUser,
+                );
+                if (result != null && mounted) {
+                  _tabController.animateTo(2);
+                }
+              } catch (e) {
+                if (mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
                       content: Text('İstatistikler açılamadı: ${e.toString()}'),
@@ -286,101 +264,84 @@ class _HomeScreenState extends State<HomeScreen>
                     ),
                   );
                 }
-              } : null,
-              tooltip: 'İstatistikler',
-              color: theme.colorScheme.primary,
-            ),
+              }
+            } : null,
+            tooltip: 'İstatistikler',
           ),
-          // Ayarlar butonu
-          Container(
-            margin: const EdgeInsets.only(right: 20),
-            decoration: BoxDecoration(
-              color: theme.colorScheme.primaryContainer.withValues(alpha: 0.3),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: IconButton(
-              icon: const Icon(Icons.settings_rounded, size: 22),
-              onPressed: () {
-                Navigator.of(context).pushNamed('/settings');
-              },
-              tooltip: 'Ayarlar',
-              color: theme.colorScheme.primary,
-            ),
+          IconButton(
+            icon: const Icon(Icons.settings_rounded, size: 22),
+            onPressed: () => Navigator.of(context).pushNamed('/settings'),
+            tooltip: 'Ayarlar',
           ),
+          const SizedBox(width: 8),
         ],
         bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(56),
+          preferredSize: const Size.fromHeight(48),
           child: Container(
             decoration: BoxDecoration(
               color: isDark ? const Color(0xFF1E293B) : Colors.white,
               border: Border(
                 bottom: BorderSide(
-                  color: theme.colorScheme.outline.withValues(alpha: 0.1),
+                  color: theme.colorScheme.outline.withValues(alpha: 0.08),
                   width: 1,
                 ),
               ),
             ),
             child: TabBar(
               controller: _tabController,
-              labelStyle: TextStyle(
-                fontSize: MediaQuery.of(context).size.width < 600 ? 13 : 14,
-                fontWeight: FontWeight.w700,
-                letterSpacing: 0.3,
+              labelStyle: const TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                letterSpacing: 0.2,
               ),
-              unselectedLabelStyle: TextStyle(
-                fontSize: MediaQuery.of(context).size.width < 600 ? 13 : 14,
+              unselectedLabelStyle: const TextStyle(
+                fontSize: 13,
                 fontWeight: FontWeight.w500,
               ),
-              labelPadding: const EdgeInsets.symmetric(vertical: 16, horizontal: 12),
+              labelPadding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
               indicatorSize: TabBarIndicatorSize.tab,
               indicator: BoxDecoration(
-                borderRadius: BorderRadius.circular(12),
-                color: theme.colorScheme.primaryContainer,
+                borderRadius: BorderRadius.circular(10),
+                color: theme.colorScheme.primaryContainer.withValues(alpha: 0.5),
               ),
-              indicatorPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              indicatorPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
               labelColor: theme.colorScheme.primary,
               unselectedLabelColor: theme.colorScheme.onSurface.withValues(alpha: 0.6),
-              tabs: [
-                if (MediaQuery.of(context).size.width >= 600)
-                  const Tab(
-                    icon: Icon(Icons.add_circle_outline_rounded, size: 20),
-                    text: 'Ekleme',
-                  )
-                else
-                  const Tab(
-                    icon: Icon(Icons.add_circle_outline_rounded, size: 20),
-                  ),
-                if (MediaQuery.of(context).size.width >= 600)
-                  const Tab(
-                    icon: Icon(Icons.list_alt_rounded, size: 20),
-                    text: 'Eklediklerim',
-                  )
-                else
-                  const Tab(
-                    icon: Icon(Icons.list_alt_rounded, size: 20),
-                  ),
-                if (MediaQuery.of(context).size.width >= 600)
-                  const Tab(
-                    icon: Icon(Icons.dashboard_rounded, size: 20),
-                    text: 'Tüm Eklenenler',
-                  )
-                else
-                  const Tab(
-                    icon: Icon(Icons.dashboard_rounded, size: 20),
-                  ),
+              tabs: const [
+                Tab(
+                  icon: Icon(Icons.add_circle_outline_rounded, size: 20),
+                  text: 'Ekleme',
+                ),
+                Tab(
+                  icon: Icon(Icons.list_alt_rounded, size: 20),
+                  text: 'Eklediklerim',
+                ),
+                Tab(
+                  icon: Icon(Icons.dashboard_rounded, size: 20),
+                  text: 'Tümü',
+                ),
+                Tab(
+                  icon: Icon(Icons.receipt_long_rounded, size: 20),
+                  text: 'Sabit',
+                ),
               ],
             ),
           ),
         ),
       ),
-      body: TabBarView(
-        controller: _tabController,
-        physics: const NeverScrollableScrollPhysics(),
-        children: [
-          AddEntryTab(currentUser: _currentUser!),
-          MyEntriesTab(currentUser: _currentUser!),
-          const AllEntriesTab(),
-        ],
+      body: SafeArea(
+        top: false,
+        bottom: true,
+        child: TabBarView(
+          controller: _tabController,
+          physics: const NeverScrollableScrollPhysics(),
+          children: [
+            AddEntryTab(currentUser: _currentUser!),
+            MyEntriesTab(currentUser: _currentUser!),
+            AllEntriesTab(currentUser: _currentUser),
+            FixedExpensesTab(currentUser: _currentUser),
+          ],
+        ),
       ),
     );
   }

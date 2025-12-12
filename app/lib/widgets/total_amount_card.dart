@@ -28,6 +28,7 @@ class TotalAmountCard extends StatelessWidget {
     final formattedTotal = NumberFormat.currency(
       symbol: '₺',
       decimalDigits: 2,
+      locale: 'tr_TR',
     ).format(total);
 
     return Container(

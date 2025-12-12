@@ -149,19 +149,9 @@ class _SplashLoginScreenState extends State<SplashLoginScreen> {
         _isLoading = true;
       });
 
-      // E-posta gönder - Deep link ile uygulama açılacak
-      await _auth.sendPasswordResetEmail(
-        email: email,
-        actionCodeSettings: ActionCodeSettings(
-          // Android için deep link
-          androidPackageName: 'com.revium.management',
-          androidMinimumVersion: '21',
-          // URL - uygulama açıldığında bu URL'e yönlendirilecek
-          // Firebase Dynamic Links veya custom URL scheme kullanılabilir
-          url: 'https://expensetracker.page.link/passwordReset',
-          handleCodeInApp: true,
-        ),
-      );
+      // E-posta gönder - Firebase standart şifre sıfırlama akışı
+      // Kullanıcı e-postadaki linke tıklayıp web'de şifresini değiştirecek
+      await _auth.sendPasswordResetEmail(email: email);
       AppLogger.info('Şifre sıfırlama e-postası gönderildi (email: $email)');
       
       // Şifre sıfırlama flag'ini ayarla (otomatik girişi engellemek için) - ÖNCE flag'i ayarla
@@ -192,6 +182,22 @@ class _SplashLoginScreenState extends State<SplashLoginScreen> {
       }
 
       if (mounted) {
+        // Başarı mesajı göster
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text(
+              'Şifre sıfırlama e-postası gönderildi. Lütfen e-posta kutunuzu kontrol edin.',
+            ),
+            backgroundColor: Colors.green,
+            duration: const Duration(seconds: 5),
+            action: SnackBarAction(
+              label: 'Tamam',
+              textColor: Colors.white,
+              onPressed: () {},
+            ),
+          ),
+        );
+        
         // Modern ve şık başarı dialog'u
         await showDialog(
           context: context,
@@ -255,7 +261,7 @@ class _SplashLoginScreenState extends State<SplashLoginScreen> {
                   const SizedBox(height: 12),
                   // Açıklama
                   Text(
-                    'Şifre sıfırlama bağlantısı gönderildi',
+                    'Şifre sıfırlama bağlantısı e-posta adresinize gönderildi.\n\nLütfen e-postanızdaki linke tıklayarak şifrenizi değiştirin, ardından uygulamaya yeni şifrenizle giriş yapın.',
                     style: Theme.of(context).textTheme.bodyLarge?.copyWith(
                       color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.7),
                     ),
@@ -628,57 +634,201 @@ class _SplashLoginScreenState extends State<SplashLoginScreen> {
         }
         
         AppLogger.info('Yeni şifreyle giriş yapılıyor (email: $email, flag: $passwordResetPending)');
-        userCredential = await _auth.signInWithEmailAndPassword(
-          email: email,
-          password: password,
-        );
+        try {
+          // Şifre sıfırlama sonrası giriş - Firebase Auth'un token'ını yenile
+          if (passwordResetPending) {
+            // Önce mevcut oturumu tamamen temizle
+            await _auth.signOut();
+            await Future.delayed(const Duration(milliseconds: 1000));
+            AppLogger.info('Şifre sıfırlama sonrası - oturum temizlendi, yeni giriş yapılıyor');
+          }
+          
+          userCredential = await _auth.signInWithEmailAndPassword(
+            email: email,
+            password: password,
+          );
+          AppLogger.success('Giriş başarılı - userCredential alındı');
+        } catch (loginError) {
+          AppLogger.error('signInWithEmailAndPassword hatası', loginError);
+          
+          // PigeonUserDetails type cast hatası - giriş aslında başarılı olabilir
+          // FirebaseAuth currentUser'ı kontrol et
+          final errorString = loginError.toString().toLowerCase();
+          if (errorString.contains('pigeonuserdetails') || 
+              errorString.contains('type cast') ||
+              errorString.contains('list<object') ||
+              errorString.contains('not a subtype')) {
+            AppLogger.warning('Type cast hatası tespit edildi - currentUser kontrol ediliyor...');
+            AppLogger.warning('PigeonUserDetails type cast hatası - currentUser kontrol ediliyor...');
+            await Future.delayed(const Duration(milliseconds: 500));
+            final currentUser = _auth.currentUser;
+            if (currentUser != null && currentUser.email == email) {
+              AppLogger.success('Giriş başarılı (currentUser kontrolü ile) - type cast hatası yok sayıldı');
+              // currentUser'ı direkt kullan (userCredential yerine)
+              // userCredential.user yerine currentUser kullanacağız
+              final user = currentUser;
+              
+              // Firestore'dan kullanıcı bilgilerini al
+              AppLogger.info('Kullanıcı bilgileri alınıyor (uid: ${user.uid})');
+              try {
+                final userDoc = await FirestoreService.getUser(user.uid);
+                final fullName = userDoc?['fullName'] as String? ?? user.displayName ?? 'Kullanıcı';
+                
+                AppLogger.info('Kullanıcı bilgileri alındı (fullName: $fullName)');
+                
+                // Lokal olarak kaydet
+                await LocalStorageService.saveUser(user.uid, fullName);
+                AppLogger.success('Kullanıcı bilgileri lokal olarak kaydedildi');
+                
+                // Şifre sıfırlama flag'ini temizle
+                await LocalStorageService.setPasswordResetPending(false);
+                AppLogger.success('Başarılı giriş - şifre sıfırlama flag\'i temizlendi');
+                
+                // Home ekranına yönlendir
+                if (mounted && !_isNavigating) {
+                  _isNavigating = true;
+                  await Future.delayed(const Duration(milliseconds: 500));
+                  if (!mounted) return;
+                  
+                  final navigator = Navigator.of(context, rootNavigator: true);
+                  if (!navigator.mounted) return;
+                  
+                  AppLogger.info('Navigator hazır - home ekranına yönlendiriliyor');
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    if (!mounted || !_isNavigating) return;
+                    try {
+                      final nav = Navigator.of(context, rootNavigator: true);
+                      if (nav.mounted) {
+                        AppLogger.success('Home ekranına yönlendiriliyor');
+                        nav.pushNamedAndRemoveUntil('/home', (route) => false);
+                      }
+                    } catch (e) {
+                      AppLogger.error('Navigator hatası', e);
+                      _isNavigating = false;
+                    }
+                  });
+                }
+                return; // Başarılı, devam etme
+              } catch (firestoreError) {
+                AppLogger.error('Firestore kullanıcı bilgisi alma hatası', firestoreError);
+                // Firestore hatası olsa bile giriş yapılmış sayılır
+                await LocalStorageService.saveUser(user.uid, user.displayName ?? 'Kullanıcı');
+                await LocalStorageService.setPasswordResetPending(false);
+                
+                // Home ekranına yönlendir
+                if (mounted && !_isNavigating) {
+                  _isNavigating = true;
+                  await Future.delayed(const Duration(milliseconds: 500));
+                  if (!mounted) return;
+                  
+                  final navigator = Navigator.of(context, rootNavigator: true);
+                  if (!navigator.mounted) return;
+                  
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    if (!mounted || !_isNavigating) return;
+                    try {
+                      final nav = Navigator.of(context, rootNavigator: true);
+                      if (nav.mounted) {
+                        nav.pushNamedAndRemoveUntil('/home', (route) => false);
+                      }
+                    } catch (e) {
+                      AppLogger.error('Navigator hatası', e);
+                      _isNavigating = false;
+                    }
+                  });
+                }
+                return; // Başarılı, devam etme
+              }
+            } else {
+              AppLogger.error('currentUser null veya email eşleşmiyor - gerçek hata');
+              rethrow;
+            }
+          } else {
+            rethrow; // Diğer hatalar için yukarıya fırlat
+          }
+        }
 
         final user = userCredential.user;
         if (user != null) {
+          AppLogger.info('Kullanıcı bilgileri alınıyor (uid: ${user.uid})');
           // Firestore'dan kullanıcı bilgilerini al
-          final userDoc = await FirestoreService.getUser(user.uid);
-          final fullName = userDoc?['fullName'] as String? ?? user.displayName ?? 'Kullanıcı';
-          
-          // Lokal olarak kaydet
-          await LocalStorageService.saveUser(user.uid, fullName);
-          
-          // Şifre sıfırlama flag'ini kesinlikle temizle (başarılı giriş sonrası)
-          await LocalStorageService.setPasswordResetPending(false);
-          AppLogger.info('Başarılı giriş - şifre sıfırlama flag\'i temizlendi');
+          try {
+            final userDoc = await FirestoreService.getUser(user.uid);
+            final fullName = userDoc?['fullName'] as String? ?? user.displayName ?? 'Kullanıcı';
+            
+            AppLogger.info('Kullanıcı bilgileri alındı (fullName: $fullName)');
+            
+            // Lokal olarak kaydet
+            await LocalStorageService.saveUser(user.uid, fullName);
+            AppLogger.success('Kullanıcı bilgileri lokal olarak kaydedildi');
+            
+            // Şifre sıfırlama flag'ini kesinlikle temizle (başarılı giriş sonrası)
+            await LocalStorageService.setPasswordResetPending(false);
+            AppLogger.success('Başarılı giriş - şifre sıfırlama flag\'i temizlendi');
+          } catch (firestoreError) {
+            AppLogger.error('Firestore kullanıcı bilgisi alma hatası', firestoreError);
+            // Firestore hatası olsa bile giriş yapılmış sayılır
+            await LocalStorageService.saveUser(user.uid, user.displayName ?? 'Kullanıcı');
+            await LocalStorageService.setPasswordResetPending(false);
+          }
+        } else {
+          AppLogger.error('userCredential.user null!');
         }
       }
 
       // Home ekranına yönlendir - güvenli navigasyon
+      AppLogger.info('Home ekranına yönlendiriliyor...');
       if (mounted && !_isNavigating) {
         _isNavigating = true;
         // Navigator'ın hazır olmasını bekle
         await Future.delayed(const Duration(milliseconds: 500));
-        if (!mounted) return;
+        if (!mounted) {
+          AppLogger.warning('Widget unmounted - navigasyon iptal edildi');
+          return;
+        }
         
         // Navigator'ın durumunu kontrol et
         final navigator = Navigator.of(context, rootNavigator: true);
-        if (!navigator.mounted) return;
+        if (!navigator.mounted) {
+          AppLogger.warning('Navigator unmounted - navigasyon iptal edildi');
+          return;
+        }
+        
+        AppLogger.info('Navigator hazır - home ekranına yönlendiriliyor');
         
         // Post-frame callback ile güvenli navigasyon
         WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (!mounted || !_isNavigating) return;
+          if (!mounted || !_isNavigating) {
+            AppLogger.warning('Post-frame callback: Widget unmounted veya navigasyon iptal edildi');
+            return;
+          }
           try {
             final nav = Navigator.of(context, rootNavigator: true);
             if (nav.mounted) {
+              AppLogger.success('Home ekranına yönlendiriliyor');
               nav.pushNamedAndRemoveUntil('/home', (route) => false);
+            } else {
+              AppLogger.error('Navigator mounted değil - navigasyon yapılamadı');
             }
           } catch (e) {
             AppLogger.error('Navigator hatası', e);
             _isNavigating = false;
           }
         });
+      } else {
+        AppLogger.warning('Navigasyon yapılamadı: mounted=${mounted}, _isNavigating=$_isNavigating');
       }
     } on FirebaseAuthException catch (e) {
+      AppLogger.error('FirebaseAuthException: ${e.code} - ${e.message}', e);
       String errorMessage = 'Giriş hatası oluştu';
       
       // PigeonUserDetails hatası için özel kontrol
       final errorString = e.toString().toLowerCase();
       final errorCode = e.code.toLowerCase();
+      
+      AppLogger.info('Giriş hatası kodu: $errorCode');
+      
+      AppLogger.info('Giriş hatası kodu: $errorCode');
       
       // Şifre hataları için özel mesajlar
       if (errorCode == 'wrong-password' || errorCode == 'invalid-credential') {
@@ -686,8 +836,8 @@ class _SplashLoginScreenState extends State<SplashLoginScreen> {
         final passwordResetPending = await LocalStorageService.isPasswordResetPending();
         
         if (passwordResetPending) {
-          // Şifre sıfırlama sonrası giriş denemesi - daha açıklayıcı mesaj
-          errorMessage = 'Şifre hatalı.\n\n⚠️ Şifrenizi yeni sıfırladıysanız:\n• E-postanızdaki şifre sıfırlama linkine tıklayın\n• Yeni şifrenizi oluşturun\n• Burada yeni oluşturduğunuz şifreyi girin\n• Eski şifreniz artık geçersizdir\n\n💡 ÖNEMLİ: Şifre sıfırlama linkine tıklayıp yeni şifrenizi oluşturduktan sonra, burada yeni şifrenizi girmeniz gerekiyor. Eski şifre artık çalışmaz.\n\n🔧 ÇÖZÜM:\n1. Uygulamayı tamamen kapatın (arka planda çalışmıyorsa)\n2. Uygulamayı tekrar açın\n3. Yeni oluşturduğunuz şifreyi girin\n\n❓ Sorun devam ederse: Şifre sıfırlama linkine tekrar tıklayıp yeni bir şifre oluşturun.';
+          // Şifre sıfırlama sonrası giriş denemesi - kısa mesaj
+          errorMessage = 'Şifre hatalı. Şifrenizi sıfırladıysanız, e-postanızdaki linke tıklayıp yeni şifrenizi oluşturduktan sonra burada yeni şifrenizi girin. Eski şifre artık geçersizdir.';
         } else {
           errorMessage = 'E-posta veya şifre hatalı. Lütfen bilgilerinizi kontrol edin.';
         }
@@ -714,14 +864,12 @@ class _SplashLoginScreenState extends State<SplashLoginScreen> {
             if (currentUser != null) {
               final fullName = _nameController.text.trim();
               // Firestore'a kaydet - retry ile
-              bool firestoreSuccess = false;
               for (int i = 0; i < 3; i++) {
                 try {
                   await FirestoreService.createUserIfNotExists(
                     currentUser.uid,
                     fullName,
                   );
-                  firestoreSuccess = true;
                   break;
                 } catch (e) {
                   AppLogger.error('Firestore kullanıcı oluşturma hatası (deneme ${i + 1}/3)', e);
@@ -847,7 +995,8 @@ class _SplashLoginScreenState extends State<SplashLoginScreen> {
           ),
         );
       }
-    } catch (e) {
+    } catch (e, stackTrace) {
+      AppLogger.error('Giriş hatası', e, stackTrace);
       if (mounted) {
         String errorMessage = 'Giriş hatası oluştu';
         final errorString = e.toString().toLowerCase();
@@ -863,14 +1012,12 @@ class _SplashLoginScreenState extends State<SplashLoginScreen> {
               if (currentUser != null) {
                 final fullName = _nameController.text.trim();
                 // Firestore'a kaydet - retry ile
-                bool firestoreSuccess = false;
                 for (int i = 0; i < 3; i++) {
                   try {
                     await FirestoreService.createUserIfNotExists(
                       currentUser.uid,
                       fullName,
                     );
-                    firestoreSuccess = true;
                     break;
                   } catch (e) {
                     AppLogger.error('Firestore kullanıcı oluşturma hatası (deneme ${i + 1}/3)', e);
@@ -1064,19 +1211,6 @@ class _SplashLoginScreenState extends State<SplashLoginScreen> {
                                 letterSpacing: 0.8,
                                 height: 1.2,
                                 fontSize: 20,
-                              ),
-                              textAlign: TextAlign.center,
-                            ),
-                            const SizedBox(height: 12),
-                            Text(
-                              'Giderlerinizi kolayca takip edin',
-                              style: theme.textTheme.bodyLarge?.copyWith(
-                                color: isDark
-                                    ? Colors.white.withValues(alpha: 0.75)
-                                    : const Color(0xFF64748B),
-                                fontWeight: FontWeight.w500,
-                                letterSpacing: 0.3,
-                                fontSize: 15,
                               ),
                               textAlign: TextAlign.center,
                             ),

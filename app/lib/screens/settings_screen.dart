@@ -8,8 +8,19 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:http/http.dart' as http;
+import 'package:path_provider/path_provider.dart';
+import 'package:open_file/open_file.dart';
+import 'package:share_plus/share_plus.dart';
+import 'dart:io';
+import 'dart:typed_data';
+import 'dart:async';
 import '../services/local_storage_service.dart';
 import '../services/upload_service.dart';
+import '../services/file_opener/file_open_service.dart';
+import '../services/backend_test_service.dart';
+import '../models/app_file_reference.dart';
+import '../utils/app_logger.dart';
 
 class SettingsScreen extends StatefulWidget {
   final Function(bool)? onThemeChanged;
@@ -374,67 +385,170 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
+  /// Excel dosyasını Google Drive'dan indirip geçici olarak saklayıp açar (yeni modüler servis)
+  Future<void> _openExcelFromDrive(BuildContext context, String fileId, int entryCount) async {
+    try {
+      AppLogger.info('📥 Excel dosyası açma işlemi başlatıldı');
+      AppLogger.debug('File ID: $fileId');
+      
+      // Loading göster
+      if (context.mounted) {
+        showDialog(
+          context: context,
+          barrierDismissible: false,
+          builder: (context) => Center(
+            child: Card(
+              child: Padding(
+                padding: const EdgeInsets.all(20),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const CircularProgressIndicator(),
+                    const SizedBox(height: 16),
+                    const Text('Excel yükleniyor...'),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      }
+
+      // AppFileReference oluştur (Excel için)
+      final fileRef = AppFileReference(
+        id: 'excel_$fileId',
+        driveFileId: fileId,
+        name: 'Harcama Takibi.xlsx',
+        mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        createdAt: DateTime.now(),
+        uploadedByUserId: '',
+      );
+
+      // Yeni modüler servis ile aç
+      await FileOpenService.openOrDownloadAndOpen(fileRef);
+
+      // Loading'i kapat
+      if (context.mounted) {
+        Navigator.of(context).pop();
+      }
+    } catch (e, stackTrace) {
+      AppLogger.error('Excel açma hatası', e, stackTrace);
+      // Loading'i kapat
+      if (context.mounted) {
+        Navigator.of(context).pop();
+        
+        // Kullanıcıya açıklayıcı hata mesajı göster
+        String errorMessage = 'Excel dosyası açılamadı';
+        final errorString = e.toString().toLowerCase();
+        
+        if (errorString.contains('timeout') || errorString.contains('zaman aşımı')) {
+          errorMessage = 'Excel dosyası yüklenirken zaman aşımı oluştu. İnternet bağlantınızı kontrol edip tekrar deneyin.';
+        } else if (errorString.contains('connection') || errorString.contains('bağlanılamadı')) {
+          errorMessage = 'Backend sunucusuna bağlanılamıyor. İnternet bağlantınızı kontrol edin.';
+        } else if (errorString.contains('404') || errorString.contains('not found')) {
+          errorMessage = 'Excel dosyası bulunamadı. Dosya henüz oluşturulmamış olabilir.';
+        } else if (errorString.contains('401') || errorString.contains('403') || errorString.contains('unauthorized')) {
+          errorMessage = 'Yetkilendirme hatası. Lütfen tekrar giriş yapın.';
+        } else {
+          errorMessage = 'Excel açma hatası: ${e.toString().length > 100 ? e.toString().substring(0, 100) + "..." : e.toString()}';
+        }
+        
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(errorMessage),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 5),
+          ),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
 
     return Scaffold(
+      extendBodyBehindAppBar: false,
       appBar: AppBar(
-        title: const Text('Ayarlar'),
+        toolbarHeight: 110,
+        automaticallyImplyLeading: true,
+        centerTitle: false,
+        title: Image.asset(
+          'assets/logo_header.png',
+          height: 85,
+          width: 85,
+          fit: BoxFit.contain,
+          errorBuilder: (context, error, stackTrace) {
+            return Icon(
+              Icons.settings_rounded,
+              size: 64,
+              color: theme.colorScheme.primary,
+            );
+          },
+        ),
+        titleSpacing: 16,
         elevation: 1,
+        backgroundColor: theme.colorScheme.surface,
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            // Tema Bölümü
-            Container(
-              decoration: BoxDecoration(
-                color: theme.colorScheme.surface,
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(
-                  color: theme.colorScheme.outline.withValues(alpha: 0.1),
-                  width: 1,
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: theme.colorScheme.shadow.withValues(alpha: 0.08),
-                    blurRadius: 8,
-                    offset: const Offset(0, 2),
-                    spreadRadius: 0,
-                  ),
-                ],
-              ),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+      body: SafeArea(
+        top: false,
+        bottom: true,
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 800),
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.only(left: 20, right: 20, top: 0, bottom: 20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  // Tema Bölümü
+                  Container(
+                    decoration: BoxDecoration(
+                      color: theme.colorScheme.surface,
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(
+                        color: theme.colorScheme.outline.withValues(alpha: 0.08),
+                        width: 1,
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: theme.colorScheme.shadow.withValues(alpha: 0.08),
+                          blurRadius: 8,
+                          offset: const Offset(0, 2),
+                          spreadRadius: 0,
+                        ),
+                      ],
+                    ),
+                    child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
                 child: SwitchListTile(
                   contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
                   title: Text(
                     'Karanlık Mod',
                     style: TextStyle(
-                      fontWeight: FontWeight.w600,
+                      fontWeight: FontWeight.w700,
                       fontSize: 16,
                     ),
                   ),
                   subtitle: Text(
                     'Uygulama temasını değiştir',
                     style: TextStyle(
-                      fontSize: 14,
+                      fontSize: 13,
                       color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
                     ),
                   ),
                   secondary: Container(
-                    width: 48,
-                    height: 48,
+                    width: 40,
+                    height: 40,
                     decoration: BoxDecoration(
-                      color: theme.colorScheme.primaryContainer.withValues(alpha: 0.4),
-                      borderRadius: BorderRadius.circular(12),
+                      color: theme.colorScheme.primaryContainer.withValues(alpha: 0.3),
+                      borderRadius: BorderRadius.circular(10),
                     ),
                     child: Icon(
                       _isDarkMode ? Icons.dark_mode : Icons.light_mode,
                       color: theme.colorScheme.primary,
-                      size: 24,
+                      size: 20,
                     ),
                   ),
                   value: _isDarkMode,
@@ -448,171 +562,170 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   },
                 ),
               ),
-            ),
-            const SizedBox(height: 20),
-            // Şifre Değiştir Bölümü
-            Container(
-              decoration: BoxDecoration(
-                color: theme.colorScheme.surface,
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(
-                  color: theme.colorScheme.outline.withValues(alpha: 0.1),
-                  width: 1,
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: theme.colorScheme.shadow.withValues(alpha: 0.08),
-                    blurRadius: 8,
-                    offset: const Offset(0, 2),
-                    spreadRadius: 0,
                   ),
-                ],
-              ),
-              child: Material(
-                color: Colors.transparent,
-                child: InkWell(
-                  onTap: _changePassword,
-                  borderRadius: BorderRadius.circular(20),
-                  child: Padding(
-                    padding: const EdgeInsets.all(20),
+                  const SizedBox(height: 20),
+                  // Şifre Değiştir Bölümü
+                  Container(
+                    decoration: BoxDecoration(
+                      color: theme.colorScheme.surface,
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(
+                        color: theme.colorScheme.outline.withValues(alpha: 0.08),
+                        width: 1,
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: theme.colorScheme.shadow.withValues(alpha: 0.08),
+                          blurRadius: 8,
+                          offset: const Offset(0, 2),
+                          spreadRadius: 0,
+                        ),
+                      ],
+                    ),
+                    child: Material(
+                      color: Colors.transparent,
+                      child: InkWell(
+                        onTap: _changePassword,
+                        borderRadius: BorderRadius.circular(20),
+                        child: Padding(
+                          padding: const EdgeInsets.all(20),
                     child: Row(
                       children: [
-                      Container(
-                        width: 56,
-                        height: 56,
-                        decoration: BoxDecoration(
-                          color: theme.colorScheme.primaryContainer
-                              .withValues(alpha: 0.4),
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                        child: Icon(
-                          Icons.lock_reset,
-                          color: theme.colorScheme.primary,
-                          size: 26,
-                        ),
-                      ),
-                      const SizedBox(width: 16),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'Şifre Değiştir',
-                              style: theme.textTheme.titleMedium?.copyWith(
-                                fontWeight: FontWeight.w700,
-                                fontSize: 17,
-                              ),
-                            ),
-                            const SizedBox(height: 6),
-                            Text(
-                              'Hesap şifrenizi güncelleyin',
-                              style: theme.textTheme.bodySmall?.copyWith(
-                                color: theme.colorScheme.onSurface
-                                    .withValues(alpha: 0.6),
-                                fontSize: 14,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      Icon(
-                        Icons.chevron_right,
-                        color: theme.colorScheme.onSurface.withValues(alpha: 0.5),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-            ),
-            const SizedBox(height: 20),
-            // Google Sheets Bölümü
-            Container(
-              decoration: BoxDecoration(
-                color: theme.colorScheme.surface,
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(
-                  color: theme.colorScheme.outline.withValues(alpha: 0.1),
-                  width: 1,
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: theme.colorScheme.shadow.withValues(alpha: 0.08),
-                    blurRadius: 8,
-                    offset: const Offset(0, 2),
-                    spreadRadius: 0,
-                  ),
-                ],
-              ),
-              child: Padding(
-                padding: const EdgeInsets.all(20),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
                         Container(
-                          width: 56,
-                          height: 56,
+                          width: 48,
+                          height: 48,
                           decoration: BoxDecoration(
-                            color: Colors.green.withValues(alpha: 0.15),
-                            borderRadius: BorderRadius.circular(16),
+                            color: theme.colorScheme.primaryContainer.withValues(alpha: 0.3),
+                            borderRadius: BorderRadius.circular(12),
                           ),
-                          child: const Icon(
-                            Icons.table_chart,
-                            color: Colors.green,
-                            size: 26,
+                          child: Icon(
+                            Icons.lock_reset,
+                            color: theme.colorScheme.primary,
+                            size: 22,
                           ),
                         ),
-                        const SizedBox(width: 16),
+                        const SizedBox(width: 12),
                         Expanded(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                'Google Sheets',
+                                'Şifre Değiştir',
                                 style: theme.textTheme.titleMedium?.copyWith(
                                   fontWeight: FontWeight.w700,
-                                  fontSize: 17,
+                                  fontSize: 16,
                                 ),
                               ),
-                              const SizedBox(height: 6),
+                              const SizedBox(height: 4),
                               Text(
-                                'Tüm kayıtlar otomatik olarak Google Sheets\'e eklenir',
+                                'Hesap şifrenizi güncelleyin',
                                 style: theme.textTheme.bodySmall?.copyWith(
-                                  color: theme.colorScheme.onSurface
-                                      .withValues(alpha: 0.6),
-                                  fontSize: 14,
+                                  color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
+                                  fontSize: 13,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        Icon(
+                          Icons.chevron_right,
+                          color: theme.colorScheme.onSurface.withValues(alpha: 0.5),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+                  ),
+                  const SizedBox(height: 20),
+                  // Google Sheets Bölümü
+                  Container(
+                    decoration: BoxDecoration(
+                      color: theme.colorScheme.surface,
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(
+                        color: theme.colorScheme.outline.withValues(alpha: 0.08),
+                        width: 1,
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: theme.colorScheme.shadow.withValues(alpha: 0.08),
+                          blurRadius: 8,
+                          offset: const Offset(0, 2),
+                          spreadRadius: 0,
+                        ),
+                      ],
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.all(20),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                    Row(
+                      children: [
+                        Container(
+                          width: 48,
+                          height: 48,
+                          decoration: BoxDecoration(
+                            color: Colors.green.withValues(alpha: 0.15),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: const Icon(
+                            Icons.table_chart_rounded,
+                            color: Colors.green,
+                            size: 22,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Excel\'i Görüntüle',
+                                style: theme.textTheme.titleMedium?.copyWith(
+                                  fontWeight: FontWeight.w700,
+                                  fontSize: 16,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                'Tüm kayıtlar otomatik olarak Excel dosyasına eklenir',
+                                style: theme.textTheme.bodySmall?.copyWith(
+                                  color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
+                                  fontSize: 13,
                                 ),
                               ),
                             ],
                           ),
                         ),
                       ],
-                    ),
-                    const SizedBox(height: 20),
+            ),
+            const SizedBox(height: 16),
                     Container(
-                      padding: const EdgeInsets.all(16),
+                      padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
                         color: theme.colorScheme.primaryContainer.withValues(alpha: 0.2),
-                        borderRadius: BorderRadius.circular(12),
+                        borderRadius: BorderRadius.circular(10),
                       ),
                       child: Text(
-                        'Her dosya yüklendiğinde kayıtlarınız "Harcama Takibi" adlı Google Sheets dosyasına otomatik olarak eklenir. Bu dosyayı Google Drive\'ınızda bulabilirsiniz.',
+                          'Her dosya yüklendiğinde kayıtlarınız "Harcama Takibi" adlı Excel dosyasına otomatik olarak eklenir. Bu dosyayı Google Drive\'ınızda bulabilirsiniz.',
                         style: theme.textTheme.bodyMedium?.copyWith(
                           color: theme.colorScheme.onSurface.withValues(alpha: 0.7),
-                          fontSize: 14,
-                          height: 1.5,
+                          fontSize: 13,
+                          height: 1.4,
                         ),
                       ),
                     ),
-                    const SizedBox(height: 20),
+                    const SizedBox(height: 16),
                     SizedBox(
                       width: double.infinity,
-                      height: 52,
+                      height: 44,
                       child: OutlinedButton.icon(
                         onPressed: () async {
                           if (!mounted) return;
+                          
+                            AppLogger.info('📊 Excel açma işlemi başlatıldı (Ayarlar - Tüm Kayıtlar)');
                           
                           // Loading göster
                           showDialog(
@@ -624,227 +737,371 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           );
 
                           try {
-                            // Google Sheets linkini al
-                            final sheetsUrl = await UploadService.getGoogleSheetsUrl();
+                            // Önce kullanıcı kontrolü
+                            final currentUser = FirebaseAuth.instance.currentUser;
+                            if (currentUser == null) {
+                                AppLogger.warning('Kullanıcı oturumu bulunamadı');
+                              Navigator.of(context).pop(); // Loading dialog'u kapat
+                              if (mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                    content: Text('Kullanıcı oturumu bulunamadı. Lütfen tekrar giriş yapın.'),
+                                    backgroundColor: Colors.red,
+                                      duration: const Duration(seconds: 4),
+                                  ),
+                                );
+                              }
+                              return;
+                            }
                             
+                            // TÜM entry'leri çek (herkesin)
+                              AppLogger.info('Firestore\'dan tüm entry\'ler alınıyor...');
+                            final entriesSnapshot = await FirebaseFirestore.instance
+                                .collection('entries')
+                                .orderBy('createdAt', descending: true)
+                                .get();
+
+                            if (!mounted) return;
+
+                            final entries = entriesSnapshot.docs.map((doc) {
+                              final data = doc.data();
+                              return {
+                                'createdAt': data['createdAt']?.toDate()?.toIso8601String() ?? DateTime.now().toIso8601String(),
+                                'notes': data['notes'] ?? '',
+                                'ownerName': data['ownerName'] ?? '',
+                                'amount': data['amount'] ?? 0.0,
+                                'description': data['description'] ?? '',
+                                'fileUrl': data['fileUrl'] ?? '',
+                              };
+                            }).toList();
+                              AppLogger.info('${entries.length} entry bulundu');
+
+                              // TÜM sabit giderleri çek
+                              AppLogger.info('Firestore\'dan tüm sabit giderler alınıyor...');
+                              final fixedExpensesSnapshot = await FirebaseFirestore.instance
+                                  .collection('fixed_expenses')
+                                  .orderBy('createdAt', descending: true)
+                                  .get();
+
+                            if (!mounted) return;
+
+                              final fixedExpenses = fixedExpensesSnapshot.docs.map((doc) {
+                                final data = doc.data();
+                                return {
+                                  'createdAt': data['createdAt']?.toDate()?.toIso8601String() ?? DateTime.now().toIso8601String(),
+                                  'startDate': data['startDate']?.toDate()?.toIso8601String(),
+                                  'notes': data['notes'] ?? '',
+                                  'ownerName': data['ownerName'] ?? '',
+                                  'amount': data['amount'] ?? 0.0,
+                                  'description': data['description'] ?? '',
+                                  'category': data['category'] ?? '',
+                                  'recurrence': data['recurrence'] ?? '',
+                                  'isActive': data['isActive'] ?? true,
+                                };
+                              }).toList();
+                              AppLogger.info('${fixedExpenses.length} sabit gider bulundu');
+
+                              if (!mounted) return;
+
+                              if (entries.isEmpty && fixedExpenses.isEmpty) {
+                                AppLogger.warning('Entry ve sabit gider bulunamadı, işlem iptal ediliyor');
+                              Navigator.of(context).pop(); // Loading dialog'u kapat
+                              if (mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text('Henüz kayıt bulunmuyor. İlk kaydı eklediğinizde Excel dosyası otomatik olarak oluşturulacak.'),
+                                    backgroundColor: Colors.orange,
+                                      duration: const Duration(seconds: 4),
+                                  ),
+                                );
+                              }
+                              return;
+                            }
+
+                              // Tüm entry'ler ve sabit giderlerle Excel'i oluştur/güncelle
+                              AppLogger.info('Excel dosyası oluşturuluyor/güncelleniyor (${entries.length} entry, ${fixedExpenses.length} sabit gider)...');
+                              final result = await UploadService.initializeGoogleSheetsWithAllData(entries, fixedExpenses);
+                              AppLogger.debug('Excel oluşturma sonucu: ${result != null ? "Başarılı" : "Başarısız"}');
+
                             if (!mounted) return;
                             Navigator.of(context).pop(); // Loading dialog'u kapat
 
-                            if (sheetsUrl != null) {
-                              // Google Sheets'i aç
+                            if (result != null && result['url'] != null) {
+                                // Excel oluşturuldu/güncellendi, URL'i düzelt ve aç
+                              final sheetsUrl = result['url'] as String;
+                                AppLogger.info('Excel URL alındı: $sheetsUrl');
+                                
+                                // File ID'yi çıkar
+                                String? fileId;
+                                if (sheetsUrl.contains('drive.google.com')) {
+                                  AppLogger.debug('Google Drive URL tespit edildi, File ID çıkarılıyor...');
+                                  // Format 1: /file/d/FILE_ID/view veya /file/d/FILE_ID
+                                  final fileIdMatch1 = RegExp(r'/file/d/([a-zA-Z0-9_-]+)').firstMatch(sheetsUrl);
+                                  if (fileIdMatch1 != null) {
+                                    fileId = fileIdMatch1.group(1);
+                                    AppLogger.debug('File ID bulundu (format 1): $fileId');
+                                  } else {
+                                    // Format 2: id=FILE_ID
+                                    final fileIdMatch2 = RegExp(r'[?&]id=([a-zA-Z0-9_-]+)').firstMatch(sheetsUrl);
+                                    if (fileIdMatch2 != null) {
+                                      fileId = fileIdMatch2.group(1);
+                                      AppLogger.debug('File ID bulundu (format 2): $fileId');
+                                    }
+                                  }
+                                }
+                                
+                                if (fileId != null) {
+                                  // Excel dosyasını indirip lokal aç (hesap seçimi olmadan)
+                                  await _openExcelFromDrive(context, fileId, entries.length);
+                                } else {
+                                  AppLogger.warning('File ID bulunamadı, orijinal URL kullanılıyor');
+                                  // Fallback: Orijinal URL'i aç
                               final uri = Uri.parse(sheetsUrl);
                               if (await canLaunchUrl(uri)) {
                                 await launchUrl(uri, mode: LaunchMode.externalApplication);
+                                  }
+                                }
                               } else {
                                 if (mounted) {
                                   ScaffoldMessenger.of(context).showSnackBar(
-                                    const SnackBar(
-                                      content: Text('Google Sheets açılamadı'),
-                                      backgroundColor: Colors.red,
-                                    ),
-                                  );
-                                }
-                              }
-                            } else {
-                              // Sheets dosyası henüz oluşturulmamış, mevcut tüm entry'lerle direkt oluştur
-                              // Loading dialog zaten açık, devam et
-                              try {
-                                // Firestore'dan kullanıcının entry'lerini çek
-                                if (!mounted) return;
-                                
-                                final currentUser = FirebaseAuth.instance.currentUser;
-                                if (currentUser == null) {
-                                  Navigator.of(context).pop(); // Loading dialog'u kapat
-                                  if (mounted) {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(
-                                        content: Text('Kullanıcı oturumu bulunamadı. Lütfen tekrar giriş yapın.'),
-                                        backgroundColor: Colors.red,
-                                        duration: Duration(seconds: 4),
-                                      ),
-                                    );
-                                  }
-                                  return;
-                                }
-                                
-                                final entriesSnapshot = await FirebaseFirestore.instance
-                                    .collection('entries')
-                                    .where('ownerId', isEqualTo: currentUser.uid)
-                                    .orderBy('createdAt', descending: true)
-                                    .get();
-
-                                if (!mounted) return;
-
-                                final entries = entriesSnapshot.docs.map((doc) {
-                                  final data = doc.data();
-                                  return {
-                                    'createdAt': data['createdAt']?.toDate()?.toIso8601String() ?? DateTime.now().toIso8601String(),
-                                    'notes': data['notes'] ?? '',
-                                    'ownerName': data['ownerName'] ?? '',
-                                    'amount': data['amount'] ?? 0.0,
-                                    'description': data['description'] ?? '',
-                                    'fileUrl': data['fileUrl'] ?? '',
-                                  };
-                                }).toList();
-
-                                if (!mounted) return;
-
-                                if (entries.isEmpty) {
-                                  Navigator.of(context).pop(); // Loading dialog'u kapat
-                                  if (mounted) {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(
-                                        content: Text('Henüz kayıt bulunmuyor. İlk kaydı eklediğinizde Google Sheets otomatik olarak oluşturulacak.'),
-                                        backgroundColor: Colors.orange,
-                                        duration: Duration(seconds: 4),
-                                      ),
-                                    );
-                                  }
-                                  return;
-                                }
-
-                                // Google Sheets'i oluştur
-                                final result = await UploadService.initializeGoogleSheetsWithEntries(entries);
-
-                                if (!mounted) return;
-                                Navigator.of(context).pop(); // Loading dialog'u kapat
-
-                                if (result != null && result['url'] != null) {
-                                  // Google Sheets'i direkt aç
-                                  final uri = Uri.parse(result['url'] as String);
-                                  if (await canLaunchUrl(uri)) {
-                                    await launchUrl(uri, mode: LaunchMode.externalApplication);
-                                  } else {
-                                    if (mounted) {
-                                      ScaffoldMessenger.of(context).showSnackBar(
-                                        const SnackBar(
-                                          content: Text('Google Sheets açılamadı'),
-                                          backgroundColor: Colors.red,
-                                        ),
-                                      );
-                                    }
-                                  }
-                                } else {
-                                  if (mounted) {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(
-                                        content: Text('Google Sheets oluşturulamadı. Lütfen tekrar deneyin.'),
-                                        backgroundColor: Colors.red,
-                                        duration: Duration(seconds: 4),
-                                      ),
-                                    );
-                                  }
-                                }
-                              } catch (e) {
-                                if (!mounted) return;
-                                Navigator.of(context).pop(); // Loading dialog'u kapat
-                                
-                                String errorMessage = 'Google Sheets oluşturulurken hata oluştu';
-                                final errorString = e.toString().toLowerCase();
-                                
-                                if (errorString.contains('permission') || errorString.contains('permission denied')) {
-                                  errorMessage = 'Firestore izin hatası. Lütfen Firebase Console\'da güvenlik kurallarını kontrol edin.';
-                                } else if (errorString.contains('timeout') || errorString.contains('connection') || errorString.contains('network')) {
-                                  errorMessage = 'Bağlantı zaman aşımı. İnternet bağlantınızı kontrol edip tekrar deneyin.';
-                                } else if (errorString.contains('not found') || errorString.contains('404')) {
-                                  errorMessage = 'Backend servisi bulunamadı. Lütfen daha sonra tekrar deneyin.';
-                                } else if (errorString.contains('500') || errorString.contains('internal')) {
-                                  errorMessage = 'Sunucu hatası. Lütfen daha sonra tekrar deneyin.';
-                                } else {
-                                  errorMessage = 'Hata: ${e.toString()}';
-                                }
-                                
-                                if (mounted) {
-                                  ScaffoldMessenger.of(context).showSnackBar(
                                     SnackBar(
-                                      content: Text(errorMessage),
+                                      content: Text('Excel dosyası oluşturulamadı. Lütfen tekrar deneyin.'),
                                       backgroundColor: Colors.red,
-                                      duration: const Duration(seconds: 6),
-                                      action: SnackBarAction(
-                                        label: 'Tekrar Dene',
-                                        textColor: Colors.white,
-                                        onPressed: () {
-                                          // Butona tıklandığında tekrar deneme işlemi yapılabilir
-                                        },
-                                      ),
-                                    ),
-                                  );
-                                }
+                                      duration: const Duration(seconds: 4),
+                                  ),
+                                );
                               }
                             }
                           } catch (e) {
                             if (!mounted) return;
                             Navigator.of(context).pop(); // Loading dialog'u kapat
                             
+                              String errorMessage = 'Excel dosyası oluşturulurken hata oluştu';
+                            final errorString = e.toString().toLowerCase();
+                            
+                            if (errorString.contains('permission') || errorString.contains('permission denied')) {
+                              errorMessage = 'Firestore izin hatası. Lütfen Firebase Console\'da güvenlik kurallarını kontrol edin.';
+                            } else if (errorString.contains('timeout') || errorString.contains('connection') || errorString.contains('network')) {
+                              errorMessage = 'Bağlantı zaman aşımı. İnternet bağlantınızı kontrol edip tekrar deneyin.';
+                            } else if (errorString.contains('not found') || errorString.contains('404')) {
+                              errorMessage = 'Backend servisi bulunamadı. Lütfen daha sonra tekrar deneyin.';
+                            } else if (errorString.contains('500') || errorString.contains('internal')) {
+                              errorMessage = 'Sunucu hatası. Lütfen daha sonra tekrar deneyin.';
+                            } else {
+                              errorMessage = 'Hata: ${e.toString()}';
+                            }
+                            
                             if (mounted) {
                               ScaffoldMessenger.of(context).showSnackBar(
                                 SnackBar(
-                                  content: Text('Hata: ${e.toString()}'),
+                                  content: Text(errorMessage),
                                   backgroundColor: Colors.red,
-                                  duration: const Duration(seconds: 4),
+                                  duration: const Duration(seconds: 6),
                                 ),
                               );
                             }
                           }
                         },
-                        icon: const Icon(Icons.table_chart, size: 20),
+                        icon: const Icon(Icons.table_chart_rounded, size: 18),
                         label: const Text(
-                          'Google Sheets\'i Aç',
+                          'Excel\'i Görüntüle',
                           style: TextStyle(
-                            fontSize: 16,
+                            fontSize: 14,
                             fontWeight: FontWeight.w600,
                           ),
                         ),
                         style: OutlinedButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          padding: const EdgeInsets.symmetric(vertical: 12),
                           shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
+                            borderRadius: BorderRadius.circular(10),
                           ),
                           side: BorderSide(
                             color: Colors.green.withValues(alpha: 0.5),
                             width: 1.5,
                           ),
-                        ),
-                      ),
-                    ),
-                  ],
                 ),
               ),
             ),
-            const SizedBox(height: 20),
-            // Çıkış Bölümü
-            Container(
-              decoration: BoxDecoration(
-                color: theme.colorScheme.errorContainer.withValues(alpha: 0.3),
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(
-                  color: theme.colorScheme.error.withValues(alpha: 0.2),
-                  width: 1,
-                ),
-              ),
-              child: Material(
-                color: Colors.transparent,
-                child: InkWell(
+                        ],
+                      ),
+                    ),
+                    ),
+                  const SizedBox(height: 20),
+                  // Backend Test Bölümü
+                  Container(
+                    decoration: BoxDecoration(
+                      color: theme.colorScheme.surface,
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(
+                        color: theme.colorScheme.outline.withValues(alpha: 0.08),
+                        width: 1,
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: theme.colorScheme.shadow.withValues(alpha: 0.08),
+                          blurRadius: 8,
+                          offset: const Offset(0, 2),
+                          spreadRadius: 0,
+                        ),
+                      ],
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.all(20),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Container(
+                                width: 48,
+                                height: 48,
+                                decoration: BoxDecoration(
+                                  color: Colors.blue.withValues(alpha: 0.15),
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: const Icon(
+                                  Icons.cloud_sync_rounded,
+                                  color: Colors.blue,
+                                  size: 22,
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      'Backend Test',
+                                      style: theme.textTheme.titleMedium?.copyWith(
+                                        fontWeight: FontWeight.w700,
+                                        fontSize: 16,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      'Backend endpoint\'lerini test et',
+                                      style: theme.textTheme.bodySmall?.copyWith(
+                                        color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
+                                        fontSize: 13,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 16),
+                          SizedBox(
+                            width: double.infinity,
+                            height: 44,
+                            child: OutlinedButton.icon(
+                              onPressed: () async {
+                                if (!mounted) return;
+                                
+                                // Loading göster
+                                showDialog(
+                                  context: context,
+                                  barrierDismissible: false,
+                                  builder: (context) => const Center(
+                                    child: CircularProgressIndicator(),
+                                  ),
+                                );
+
+                                try {
+                                  AppLogger.info('🔍 Backend endpoint\'leri test ediliyor...');
+                                  
+                                  // Health check test
+                                  final healthCheck = await BackendTestService.testHealthCheck();
+                                  
+                                  if (!mounted) return;
+                                  Navigator.of(context).pop(); // Loading dialog'u kapat
+                                  
+                                  if (mounted) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Text(
+                                          healthCheck 
+                                            ? '✅ Backend health check başarılı!' 
+                                            : '❌ Backend health check başarısız. Logları kontrol edin.',
+                                        ),
+                                        backgroundColor: healthCheck ? Colors.green : Colors.red,
+                                        duration: const Duration(seconds: 4),
+                                      ),
+                                    );
+                                  }
+                                } catch (e) {
+                                  if (!mounted) return;
+                                  Navigator.of(context).pop(); // Loading dialog'u kapat
+                                  
+                                  if (mounted) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Text('Backend test hatası: ${e.toString()}'),
+                                        backgroundColor: Colors.red,
+                                        duration: const Duration(seconds: 4),
+                                      ),
+                                    );
+                                  }
+                                }
+                              },
+                              icon: const Icon(Icons.cloud_sync_rounded, size: 18),
+                              label: const Text(
+                                'Health Check Test',
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              style: OutlinedButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(vertical: 12),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                side: BorderSide(
+                                  color: Colors.blue.withValues(alpha: 0.5),
+                                  width: 1.5,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  // Çıkış Bölümü
+                  Container(
+                    decoration: BoxDecoration(
+                      color: theme.colorScheme.errorContainer.withValues(alpha: 0.2),
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(
+                        color: theme.colorScheme.error.withValues(alpha: 0.15),
+                        width: 1,
+                      ),
+                    ),
+                    child: Material(
+                      color: Colors.transparent,
+                      child: InkWell(
                   onTap: _logout,
-                  borderRadius: BorderRadius.circular(20),
+                  borderRadius: BorderRadius.circular(16),
                   child: Padding(
-                    padding: const EdgeInsets.all(20),
+                    padding: const EdgeInsets.all(16),
                     child: Row(
                       children: [
                         Container(
-                          width: 56,
-                          height: 56,
+                          width: 48,
+                          height: 48,
                           decoration: BoxDecoration(
                             color: theme.colorScheme.error.withValues(alpha: 0.15),
-                            borderRadius: BorderRadius.circular(16),
+                            borderRadius: BorderRadius.circular(12),
                           ),
                           child: Icon(
-                            Icons.logout,
+                            Icons.logout_rounded,
                             color: theme.colorScheme.error,
-                            size: 26,
+                            size: 22,
                           ),
                         ),
-                        const SizedBox(width: 16),
+                        const SizedBox(width: 12),
                         Expanded(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
@@ -853,17 +1110,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                 'Çıkış Yap',
                                 style: theme.textTheme.titleMedium?.copyWith(
                                   fontWeight: FontWeight.w700,
-                                  fontSize: 17,
+                                  fontSize: 16,
                                   color: theme.colorScheme.error,
                                 ),
                               ),
-                              const SizedBox(height: 6),
+                              const SizedBox(height: 4),
                               Text(
                                 'Hesabınızdan çıkış yapın',
                                 style: theme.textTheme.bodySmall?.copyWith(
-                                  color: theme.colorScheme.onSurface
-                                      .withValues(alpha: 0.6),
-                                  fontSize: 14,
+                                  color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
+                                  fontSize: 13,
                                 ),
                               ),
                             ],
@@ -876,11 +1132,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       ],
                     ),
                   ),
+                    ),
+                  ),
                 ),
-              ),
+              ],
             ),
-            ],
+          ),
         ),
+      ),
       ),
     );
   }

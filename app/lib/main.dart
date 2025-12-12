@@ -4,7 +4,7 @@
  */
 
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart' show kIsWeb, kDebugMode;
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -12,14 +12,11 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'firebase_options.dart';
-import 'services/local_storage_service.dart';
-import 'services/firestore_service.dart';
 import 'screens/splash_login_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/settings_screen.dart';
 import 'screens/statistics_screen.dart';
 import 'screens/password_reset_screen.dart';
-import 'models/user_profile.dart';
 import 'utils/app_logger.dart';
 
 void main() async {
@@ -82,7 +79,6 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   }
 
   static const MethodChannel _channel = MethodChannel('com.revium.management/deep_link');
-  String? _pendingActionCode;
 
   // Deep link kontrolü - uygulama açıldığında
   Future<void> _checkInitialLink() async {
@@ -132,7 +128,6 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       
       if (mode == 'resetPassword' && oobCode != null) {
         AppLogger.info('Password reset deep link detected, oobCode: $oobCode');
-        _pendingActionCode = oobCode;
         _navigateToPasswordReset(oobCode);
       }
     } catch (e) {

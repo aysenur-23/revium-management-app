@@ -1,40 +1,43 @@
-/**
- * Production-safe logging utility
- * Her zaman konsola yazdırır (debug ve release mode'da)
- */
-
-import 'package:flutter/foundation.dart';
-
+/// Production-safe logging utility
+/// Her zaman konsola yazdırır (debug ve release mode'da)
+/// print() kullanır - release mode'da da görünür
 class AppLogger {
   /// Info log (her zaman konsola yazdır)
+  // ignore: avoid_print
   static void info(String message) {
-    debugPrint('ℹ️ [INFO] $message');
+    print('ℹ️ [INFO] $message');
   }
 
   /// Success log (her zaman konsola yazdır)
+  // ignore: avoid_print
   static void success(String message) {
-    debugPrint('✅ [SUCCESS] $message');
+    print('✅ [SUCCESS] $message');
   }
 
   /// Warning log (her zaman konsola yazdır)
+  // ignore: avoid_print
   static void warning(String message) {
-    debugPrint('⚠️ [WARNING] $message');
+    print('⚠️ [WARNING] $message');
   }
 
   /// Error log (her zaman konsola yazdır)
+  // ignore: avoid_print
   static void error(String message, [Object? error, StackTrace? stackTrace]) {
-    debugPrint('❌ [ERROR] $message');
+    print('❌ [ERROR] $message');
     if (error != null) {
-      debugPrint('   Error: $error');
+      // ignore: avoid_print
+      print('   Error: $error');
     }
     if (stackTrace != null) {
-      debugPrint('   StackTrace: $stackTrace');
+      // ignore: avoid_print
+      print('   StackTrace: $stackTrace');
     }
   }
 
   /// Debug log (her zaman konsola yazdır)
+  // ignore: avoid_print
   static void debug(String message) {
-    debugPrint('🔍 [DEBUG] $message');
+    print('🔍 [DEBUG] $message');
   }
 }
 

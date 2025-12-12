@@ -108,9 +108,6 @@ class _PasswordResetScreenState extends State<PasswordResetScreen> {
 
       // Email'i action code'dan çıkar (verifyPasswordResetCode'dan sonra)
       // Firebase Auth'un currentUser'ı null olacak, email'i başka yoldan almalıyız
-      // Action code'dan email'i parse etmek için Firebase Auth API'sini kullan
-      final auth = FirebaseAuth.instance;
-      
       // Şifre sıfırlandı, şimdi yeni şifreyle giriş yap
       // Email'i verifyPasswordResetCode'dan aldık
       if (_email != null && mounted) {
