@@ -571,9 +571,11 @@ class UploadService {
         };
       }).toList();
 
+      // sheetName: sabit dosya adı (aynı isimde dosya varsa güncellenir)
+      final sheetName = fileName.replaceAll('.csv', '').replaceAll(RegExp(r'_\d{4}-\d{2}-\d{2}'), '');
       request.body = jsonEncode({
         'entries': formattedEntries,
-        'fileName': fileName,
+        'sheetName': sheetName,
       });
 
       AppLogger.info('Excel oluşturma isteği: $uri');
@@ -645,7 +647,7 @@ class UploadService {
       request.body = jsonEncode({
         'entries': formattedEntries,
         'fixedExpenses': formattedFixedExpenses,
-        'fileName': 'Harcama Takibi.csv',
+        'sheetName': 'Tum_Harcamalar', // Sabit dosya adı
       });
 
       AppLogger.info('Excel (All Data) oluşturma isteği: $uri');
@@ -703,6 +705,7 @@ class UploadService {
 
       request.body = jsonEncode({
         'fixedExpenses': formattedFixedExpenses,
+        'sheetName': 'Sabit_Giderler', // Sabit dosya adı
       });
 
       AppLogger.info('Excel (Fixed Expenses) oluşturma isteği: $uri');
