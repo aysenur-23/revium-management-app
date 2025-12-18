@@ -24,6 +24,10 @@ Flutter mobil uygulama + Supabase Edge Functions backend ile Google Drive entegr
        - **ÖNEMLİ:** Tüm yüklenen dosyalar (PDF, JPEG, PNG vb.) bu klasöre kaydedilir
        - Klasör linki: https://drive.google.com/drive/folders/1yAvPlU5LqcDX5HJk55usmkFd1OrNrhe1
        - **Kurulum:** Name: `GOOGLE_DRIVE_FOLDER_ID`, Value: `1yAvPlU5LqcDX5HJk55usmkFd1OrNrhe1` → Save
+     - `GOOGLE_SHEETS_FOLDER_ID`: `1yO4roZMvMLxHDW4oHnQ592hX6opIRthG` (Excel/Sheets dosyaları klasörü)
+       - **ÖNEMLİ:** Tüm Excel/CSV dosyaları Google Sheets formatında bu klasöre kaydedilir
+       - Klasör linki: https://drive.google.com/drive/folders/1yO4roZMvMLxHDW4oHnQ592hX6opIRthG
+       - **Kurulum:** Name: `GOOGLE_SHEETS_FOLDER_ID`, Value: `1yO4roZMvMLxHDW4oHnQ592hX6opIRthG` → Save
 
 2. **Edge Function'ı Deploy Edin:**
    
@@ -101,6 +105,11 @@ flutter run
   - Sheets linki: https://docs.google.com/spreadsheets/d/1_M2g7x4DQs8OQuZzrk4qWkLTMFGRrd-1/edit
   - Yeni eklenen satırlar otomatik olarak uygulamada görünecektir
   - Sheets formatı: Açıklama, Tutar, Kişi, Kategori, Tekrarlama, Notlar, Aktif/Pasif
+- **Google Sheets Excel Dosyaları:** Tüm Excel/CSV dosyaları artık Google Sheets formatında oluşturulur
+  - Klasör ID: `1yO4roZMvMLxHDW4oHnQ592hX6opIRthG`
+  - Klasör linki: https://drive.google.com/drive/folders/1yO4roZMvMLxHDW4oHnQ592hX6opIRthG
+  - Dosyalar dinamik olarak güncellenir (mevcut dosya varsa güncellenir, yoksa yeni oluşturulur)
+  - Bu klasör ID'si Supabase secrets'a `GOOGLE_SHEETS_FOLDER_ID` olarak eklenmelidir
 - **ÖNEMLİ:** Supabase anon key'i `app/lib/services/upload_service.dart` dosyasında güncellenmelidir
   - Supabase Dashboard > Settings > API > anon public key'i kopyalayın
   - `upload_service.dart` dosyasındaki `supabaseAnonKey` değişkenini güncelleyin

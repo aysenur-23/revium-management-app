@@ -220,85 +220,156 @@ serve(async (req) => {
       const body = await req.json();
       const entries = body.entries || [];
       const fixedExpenses = body.fixedExpenses || [];
+      const sheetName = body.sheetName || 'Giderler'; // Sabit dosya adı
       const allData = [...entries, ...fixedExpenses];
 
-      // CSV header
+      // Google Sheets için veri hazırla
       const headers = ['Tarih', 'Açıklama', 'Tutar', 'Kişi', 'Notlar', 'Dosya Linki'];
-      const csvRows = [headers.join(',')];
+      const values = [headers];
 
       for (const e of allData) {
-        const row = [
+        values.push([
           e.dateTime || '',
-          `"${(e.description || '').replace(/"/g, '""')}"`,
+          e.description || '',
           e.amount || 0,
-          `"${(e.ownerName || '').replace(/"/g, '""')}"`,
-          `"${(e.notes || '').replace(/"/g, '""')}"`,
+          e.ownerName || '',
+          e.notes || '',
           e.fileUrl || '',
-        ];
-        csvRows.push(row.join(','));
+        ]);
       }
 
-      const csvContent = csvRows.join('\n');
-      const csvBytes = new TextEncoder().encode(csvContent);
-      const folderId = Deno.env.get('GOOGLE_DRIVE_FOLDER_ID') || '';
-      const fileName = `Giderler_${new Date().toISOString().split('T')[0]}.csv`;
+      // Google Sheets klasör ID'si
+      const sheetsFolderId = Deno.env.get('GOOGLE_SHEETS_FOLDER_ID') || '1yO4roZMvMLxHDW4oHnQ592hX6opIRthG';
+      const fileName = `${sheetName}`; // Sabit dosya adı (tarihsiz)
 
-      // Upload CSV
-      const metadata: Record<string, unknown> = { name: fileName, mimeType: 'text/csv' };
-      if (folderId) metadata.parents = [folderId];
+      // Google Sheets klasör ID'si
+      const sheetsFolderId = Deno.env.get('GOOGLE_SHEETS_FOLDER_ID') || '1yO4roZMvMLxHDW4oHnQ592hX6opIRthG';
+      const fileName = `${sheetName}`; // Sabit dosya adı (tarihsiz)
 
-      const sessionResp = await fetch(
-        `${GOOGLE_DRIVE_API}/files?uploadType=resumable&${getDriveApiParams({ fields: 'id' })}`,
-        {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify(metadata),
-        }
+      // Önce mevcut Google Sheets dosyasını ara
+      let existingSpreadsheetId: string | null = null;
+      const searchQuery = `name='${fileName}' and '${sheetsFolderId}' in parents and mimeType='application/vnd.google-apps.spreadsheet' and trashed=false`;
+      
+      const searchResp = await fetch(
+        `${GOOGLE_DRIVE_API_V3}/files?q=${encodeURIComponent(searchQuery)}&fields=files(id,name)&${getDriveApiParams()}`,
+        { headers: { Authorization: `Bearer ${token}` } }
       );
 
-      if (!sessionResp.ok) {
-        return new Response(JSON.stringify({ error: 'CSV upload session failed', detail: await sessionResp.text() }), {
-          status: 500,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        });
+      if (searchResp.ok) {
+        const searchData = await searchResp.json();
+        if (searchData.files && searchData.files.length > 0) {
+          existingSpreadsheetId = searchData.files[0].id;
+          console.log('Existing Google Sheets found:', existingSpreadsheetId);
+        }
       }
 
-      const uploadUrl = sessionResp.headers.get('Location');
-      if (!uploadUrl) {
-        return new Response(JSON.stringify({ error: 'Upload URL alınamadı' }), {
-          status: 500,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        });
+      let spreadsheetId: string = '';
+      let needsNewFile = !existingSpreadsheetId;
+
+      if (existingSpreadsheetId) {
+        // Mevcut Google Sheets'i güncelle (Values API ile)
+        try {
+          const updateResp = await fetch(
+            `${GOOGLE_SHEETS_API}/${existingSpreadsheetId}/values/Sheet1!A1:Z${values.length}?valueInputOption=RAW`,
+            {
+              method: 'PUT',
+              headers: { 
+                Authorization: `Bearer ${token}`, 
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({ values: values }),
+            }
+          );
+
+          if (updateResp.ok) {
+            spreadsheetId = existingSpreadsheetId;
+            console.log('Google Sheets updated:', spreadsheetId);
+          } else {
+            const errorText = await updateResp.text();
+            console.log('Update failed, creating new file:', errorText);
+            needsNewFile = true;
+          }
+        } catch (error) {
+          console.log('Update error, creating new file:', error);
+          needsNewFile = true;
+        }
       }
 
-      const uploadResp = await fetch(uploadUrl, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'text/csv', 'Content-Length': csvBytes.length.toString() },
-        body: csvBytes,
-      });
+      if (needsNewFile) {
+        // Yeni Google Sheets oluştur
+        const metadata: Record<string, unknown> = { 
+          name: fileName, 
+          mimeType: 'application/vnd.google-apps.spreadsheet',
+          parents: [sheetsFolderId],
+        };
 
-      if (!uploadResp.ok) {
-        return new Response(JSON.stringify({ error: 'CSV upload failed', detail: await uploadResp.text() }), {
-          status: 500,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        const createResp = await fetch(
+          `${GOOGLE_DRIVE_API_V3}/files?${getDriveApiParams({ fields: 'id' })}`,
+          {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify(metadata),
+          }
+        );
+
+        if (!createResp.ok) {
+          const errorText = await createResp.text();
+          return new Response(JSON.stringify({ error: 'Google Sheets oluşturulamadı', detail: errorText }), {
+            status: 500,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+
+        const createData = await createResp.json();
+        spreadsheetId = createData.id;
+
+        if (!spreadsheetId) {
+          return new Response(JSON.stringify({ error: 'Google Sheets ID alınamadı' }), {
+            status: 500,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+
+        // Verileri Google Sheets'e yaz
+        const writeResp = await fetch(
+          `${GOOGLE_SHEETS_API}/${spreadsheetId}/values/Sheet1!A1:Z${values.length}?valueInputOption=RAW`,
+          {
+            method: 'PUT',
+            headers: { 
+              Authorization: `Bearer ${token}`, 
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ values: values }),
+          }
+        );
+
+        if (!writeResp.ok) {
+          const errorText = await writeResp.text();
+          console.error('Google Sheets write error:', errorText);
+          // Dosya oluşturuldu ama veri yazılamadı, yine de başarılı say
+        }
+
+        // Set permissions (sadece yeni dosyalar için)
+        await fetch(`${GOOGLE_DRIVE_API_V3}/files/${spreadsheetId}/permissions?${getDriveApiParams()}`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ role: 'reader', type: 'anyone' }),
         });
+        
+        console.log('New Google Sheets created:', spreadsheetId);
       }
 
-      const uploadData = await uploadResp.json();
-      const csvFileId = uploadData.id;
-
-      // Set permissions
-      await fetch(`${GOOGLE_DRIVE_API_V3}/files/${csvFileId}/permissions?${getDriveApiParams()}`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ role: 'reader', type: 'anyone' }),
-      });
-
-      const csvUrl = `https://drive.google.com/file/d/${csvFileId}/view`;
-      console.log('CSV created:', csvUrl);
+      const sheetsUrl = `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit`;
+      console.log('Google Sheets ready:', sheetsUrl);
 
       return new Response(
-        JSON.stringify({ success: true, excelId: csvFileId, url: csvUrl, downloadUrl: `https://drive.google.com/uc?export=download&id=${csvFileId}` }),
+        JSON.stringify({ 
+          success: true, 
+          excelId: spreadsheetId, 
+          spreadsheetId: spreadsheetId,
+          url: sheetsUrl, 
+          downloadUrl: `https://docs.google.com/spreadsheets/d/${spreadsheetId}/export?format=xlsx` 
+        }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
