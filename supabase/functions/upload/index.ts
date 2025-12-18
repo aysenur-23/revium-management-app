@@ -160,7 +160,7 @@ serve(async (req) => {
         }
 
         // Verileri parse et
-        const expenses = [];
+        const expenses: Array<Record<string, unknown>> = [];
         for (let i = startRow; i < values.length; i++) {
           const row = values[i];
           if (!row || row.length === 0) continue;
@@ -237,10 +237,6 @@ serve(async (req) => {
           e.fileUrl || '',
         ]);
       }
-
-      // Google Sheets klasör ID'si
-      const sheetsFolderId = Deno.env.get('GOOGLE_SHEETS_FOLDER_ID') || '1yO4roZMvMLxHDW4oHnQ592hX6opIRthG';
-      const fileName = `${sheetName}`; // Sabit dosya adı (tarihsiz)
 
       // Google Sheets klasör ID'si
       const sheetsFolderId = Deno.env.get('GOOGLE_SHEETS_FOLDER_ID') || '1yO4roZMvMLxHDW4oHnQ592hX6opIRthG';

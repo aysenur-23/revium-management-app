@@ -160,7 +160,7 @@ serve(async (req) => {
         }
 
         // Verileri parse et
-        const expenses = [];
+        const expenses: Array<Record<string, unknown>> = [];
         for (let i = startRow; i < values.length; i++) {
           const row = values[i];
           if (!row || row.length === 0) continue;
