@@ -18,6 +18,7 @@ import 'screens/settings_screen.dart';
 import 'screens/statistics_screen.dart';
 import 'screens/password_reset_screen.dart';
 import 'utils/app_logger.dart';
+import 'services/supabase_keep_alive_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -34,6 +35,14 @@ void main() async {
     AppLogger.error('Firebase başlatma hatası', e);
     // Firebase başlatılamazsa da uygulama çalışmaya devam eder
     // Ancak Firestore işlemleri başarısız olacaktır
+  }
+
+  // Supabase keep-alive servisini başlat (arka planda çalışır)
+  try {
+    SupabaseKeepAliveService.start();
+  } catch (e) {
+    AppLogger.warning('Supabase keep-alive başlatılamadı: $e');
+    // Keep-alive başlatılamazsa da uygulama çalışmaya devam eder
   }
 
   // Uygulamayı hemen başlat (locale yüklemesi arka planda yapılacak)
