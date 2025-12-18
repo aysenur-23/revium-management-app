@@ -1,14 +1,10 @@
-/**
- * Backend endpoint test servisi
- * Backend'in çalışıp çalışmadığını ve download endpoint'inin erişilebilir olup olmadığını test eder
- */
-
 import 'package:http/http.dart' as http;
-import 'dart:convert';
 import '../services/upload_service.dart';
 import '../utils/app_logger.dart';
 import '../config/app_config.dart';
 
+/// Backend endpoint test servisi
+/// Backend'in çalışıp çalışmadığını ve download endpoint'inin erişilebilir olup olmadığını test eder
 class BackendTestService {
   /// Backend health check endpoint'ini test eder
   static Future<bool> testHealthCheck() async {
@@ -19,7 +15,7 @@ class BackendTestService {
       if (baseUrl.contains('supabase.co')) {
         // Supabase Edge Function için
         if (baseUrl.endsWith('/upload')) {
-          healthUrl = baseUrl.substring(0, baseUrl.length - 6) + 'health';
+          healthUrl = '${baseUrl.substring(0, baseUrl.length - 6)}health';
         } else {
           healthUrl = baseUrl.endsWith('/') ? '${baseUrl}health' : '$baseUrl/health';
         }
@@ -72,12 +68,12 @@ class BackendTestService {
       
       if (baseUrl.contains('supabase.co')) {
         if (baseUrl.endsWith('/upload')) {
-          downloadUrl = baseUrl.substring(0, baseUrl.length - 6) + 'download';
+          downloadUrl = '${baseUrl.substring(0, baseUrl.length - 6)}download';
         } else {
           downloadUrl = baseUrl.replaceAll('/upload', '/download');
         }
       } else if (baseUrl.endsWith('/upload')) {
-        downloadUrl = baseUrl.substring(0, baseUrl.length - 6) + 'download';
+        downloadUrl = '${baseUrl.substring(0, baseUrl.length - 6)}download';
       } else {
         downloadUrl = baseUrl.endsWith('/') ? '${baseUrl}download' : '$baseUrl/download';
       }
@@ -143,7 +139,7 @@ class BackendTestService {
   
   /// Backend URL'ini ve endpoint'lerini kontrol eder
   static Future<Map<String, dynamic>> testAllEndpoints() async {
-                                  AppLogger.info('🔍 Backend endpointleri test ediliyor...');
+    AppLogger.info('🔍 Backend endpointleri test ediliyor...');
     
     final baseUrl = await getBackendBaseUrl();
     AppLogger.info('📡 Backend Base URL: $baseUrl');

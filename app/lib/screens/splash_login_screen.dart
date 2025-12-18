@@ -44,73 +44,38 @@ class _SplashLoginScreenState extends State<SplashLoginScreen> {
     _hasCheckedUser = true;
     
     try {
-      // ÖNCE şifre sıfırlama beklemede mi kontrol et (öncelikli)
-      final passwordResetPending = await LocalStorageService.isPasswordResetPending();
-      
-      // Eğer şifre sıfırlama beklemede ise, kesinlikle otomatik giriş yapma
-      if (passwordResetPending) {
-        AppLogger.info('Şifre sıfırlama beklemede - otomatik giriş yapılmıyor');
-        // Oturumu kapat (güvenlik için) - tüm oturumları temizle
-        try {
-          final currentUser = _auth.currentUser;
-          if (currentUser != null) {
-            AppLogger.info('Şifre sıfırlama beklemede - mevcut oturum kapatılıyor (email: ${currentUser.email})');
-            await _auth.signOut();
-            // Firebase Auth'un oturumunu tamamen temizlemesi için bekleme
-            await Future.delayed(const Duration(milliseconds: 800));
-            
-            // Tekrar kontrol et ve gerekirse tekrar kapat
-            var retryCount = 0;
-            while (retryCount < 3) {
-              final stillLoggedIn = _auth.currentUser;
-              if (stillLoggedIn == null) {
-                break; // Oturum kapandı
-              }
-              AppLogger.warning('Oturum hala açık (deneme ${retryCount + 1}/3), tekrar kapatılıyor');
-              await _auth.signOut();
-              await Future.delayed(const Duration(milliseconds: 500));
-              retryCount++;
-            }
-            
-            await LocalStorageService.clearUser();
-            AppLogger.info('Şifre sıfırlama beklemede - oturum kapatıldı ve temizlendi');
-          } else {
-            // Oturum yok ama flag var - sadece lokal temizle
-            await LocalStorageService.clearUser();
-            AppLogger.info('Şifre sıfırlama beklemede - lokal temizlendi (oturum yok)');
-          }
-        } catch (e) {
-          AppLogger.warning('Oturum kapatma hatası (önemli değil): $e');
-        }
-        // Login ekranında kal - kesinlikle home'a gitme
-        return;
-      }
-      
-      // Şifre sıfırlama beklemede değilse, normal otomatik giriş kontrolü yap
+      // Firebase'de mevcut kullanıcı var mı kontrol et
       final currentUser = _auth.currentUser;
+      
+      // Eğer kullanıcı giriş yapmışsa, doğrudan home'a yönlendir
+      // Şifre sıfırlama flag'i sadece yeni giriş yapılırken kontrol edilir
       if (currentUser != null && mounted && !_isNavigating) {
-        // Kullanıcı zaten giriş yapmış, home'a yönlendir
-        if (mounted && !_isNavigating) {
-          _isNavigating = true;
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted) {
-              try {
-                final navigator = Navigator.of(context, rootNavigator: true);
-                if (navigator.canPop() || ModalRoute.of(context)?.settings.name != '/home') {
-                  navigator.pushNamedAndRemoveUntil('/home', (route) => false);
-                }
-              } catch (e) {
-                AppLogger.error('SplashLoginScreen kullanıcı kontrolü navigasyon hatası', e);
-                _isNavigating = false;
-                _hasCheckedUser = false; // Hata durumunda tekrar denemek için
+        AppLogger.info('Mevcut oturum bulundu - otomatik giriş yapılıyor (email: ${currentUser.email})');
+        
+        // Şifre sıfırlama flag'ini temizle (kullanıcı zaten giriş yapmış)
+        await LocalStorageService.clearPasswordResetPending();
+        
+        _isNavigating = true;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            try {
+              final navigator = Navigator.of(context, rootNavigator: true);
+              if (navigator.canPop() || ModalRoute.of(context)?.settings.name != '/home') {
+                navigator.pushNamedAndRemoveUntil('/home', (route) => false);
               }
+            } catch (e) {
+              AppLogger.error('SplashLoginScreen kullanıcı kontrolü navigasyon hatası', e);
+              _isNavigating = false;
+              _hasCheckedUser = false;
             }
-          });
-        }
+          }
+        });
+      } else {
+        AppLogger.info('Oturum bulunamadı - giriş ekranı gösteriliyor');
       }
     } catch (e) {
       AppLogger.error('SplashLoginScreen kullanıcı kontrolü hatası', e);
-      _hasCheckedUser = false; // Hata durumunda tekrar denemek için
+      _hasCheckedUser = false;
     }
   }
 
@@ -828,8 +793,6 @@ class _SplashLoginScreenState extends State<SplashLoginScreen> {
       
       AppLogger.info('Giriş hatası kodu: $errorCode');
       
-      AppLogger.info('Giriş hatası kodu: $errorCode');
-      
       // Şifre hataları için özel mesajlar
       if (errorCode == 'wrong-password' || errorCode == 'invalid-credential') {
         // Şifre sıfırlama beklemede mi kontrol et
@@ -1253,7 +1216,7 @@ class _SplashLoginScreenState extends State<SplashLoginScreen> {
                                     controller: _nameController,
                                     decoration: InputDecoration(
                                       labelText: 'Ad Soyad',
-                                      hintText: 'Örn: Ahmet Yılmaz',
+                                      hintText: 'Adınızı ve soyadınızı girin',
                                       prefixIcon: Container(
                                         margin: const EdgeInsets.all(12),
                                         padding: const EdgeInsets.all(10),
