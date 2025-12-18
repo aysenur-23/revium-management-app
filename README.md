@@ -18,7 +18,9 @@ Flutter mobil uygulama + Supabase Edge Functions backend ile Google Drive entegr
      - `GOOGLE_CLIENT_ID`: (Google Cloud Console'dan alınacak)
      - `GOOGLE_CLIENT_SECRET`: (Google Cloud Console'dan alınacak)
      - `GOOGLE_REFRESH_TOKEN`: (OAuth flow ile alınacak - aşağıya bakın)
-     - `GOOGLE_DRIVE_FOLDER_ID`: (Opsiyonel - Google Drive klasör ID'si)
+     - `GOOGLE_DRIVE_FOLDER_ID`: `1yAvPlU5LqcDX5HJk55usmkFd1OrNrhe1` (Maliyet belgeleri klasörü)
+       - **ÖNEMLİ:** Tüm yüklenen dosyalar (PDF, JPEG, PNG vb.) bu klasöre kaydedilir
+       - Klasör linki: https://drive.google.com/drive/folders/1yAvPlU5LqcDX5HJk55usmkFd1OrNrhe1
 
 2. **Edge Function'ı Deploy Edin:**
    
@@ -86,6 +88,10 @@ flutter run
 - Refresh Token: OAuth flow ile bir kez alınır, Supabase secrets'a eklenir
 - APK: Herhangi bir Android telefona yüklenebilir, backend URL otomatik
 - Siyah Ekran Sorunu: Dialog kapatma ve exception handling iyileştirildi
+- **Google Drive Klasörü:** Tüm maliyet belgeleri (PDF, JPEG, PNG vb.) belirtilen klasöre kaydedilir
+  - Klasör ID: `1yAvPlU5LqcDX5HJk55usmkFd1OrNrhe1`
+  - Klasör linki: https://drive.google.com/drive/folders/1yAvPlU5LqcDX5HJk55usmkFd1OrNrhe1
+  - Bu klasör ID'si Supabase secrets'a `GOOGLE_DRIVE_FOLDER_ID` olarak eklenmelidir
 - **ÖNEMLİ:** Supabase anon key'i `app/lib/services/upload_service.dart` dosyasında güncellenmelidir
   - Supabase Dashboard > Settings > API > anon public key'i kopyalayın
   - `upload_service.dart` dosyasındaki `supabaseAnonKey` değişkenini güncelleyin
