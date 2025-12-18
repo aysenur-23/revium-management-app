@@ -13,7 +13,9 @@ Flutter mobil uygulama + Supabase Edge Functions backend ile Google Drive entegr
 ### Backend (Supabase Edge Functions)
 
 1. **Supabase secrets ekle (Dashboard'dan):**
-   - Supabase Dashboard > Project Settings > Edge Functions > Secrets
+   - Supabase Dashboard'a gidin: https://supabase.com/dashboard
+   - Projenizi seçin (nemwuunbowzuuyvhmehi)
+   - Project Settings > Edge Functions > Secrets bölümüne gidin
    - Şu secrets'ları ekleyin:
      - `GOOGLE_CLIENT_ID`: (Google Cloud Console'dan alınacak)
      - `GOOGLE_CLIENT_SECRET`: (Google Cloud Console'dan alınacak)
@@ -21,6 +23,7 @@ Flutter mobil uygulama + Supabase Edge Functions backend ile Google Drive entegr
      - `GOOGLE_DRIVE_FOLDER_ID`: `1yAvPlU5LqcDX5HJk55usmkFd1OrNrhe1` (Maliyet belgeleri klasörü)
        - **ÖNEMLİ:** Tüm yüklenen dosyalar (PDF, JPEG, PNG vb.) bu klasöre kaydedilir
        - Klasör linki: https://drive.google.com/drive/folders/1yAvPlU5LqcDX5HJk55usmkFd1OrNrhe1
+       - **Kurulum:** Name: `GOOGLE_DRIVE_FOLDER_ID`, Value: `1yAvPlU5LqcDX5HJk55usmkFd1OrNrhe1` → Save
 
 2. **Edge Function'ı Deploy Edin:**
    
@@ -66,6 +69,7 @@ flutter run
 - ✅ Harcama kaydı ekleme
 - ✅ Dosya yükleme (PNG, JPEG, PDF)
 - ✅ Google Drive entegrasyonu
+- ✅ Google Sheets entegrasyonu (Sabit giderler dinamik okuma)
 - ✅ Firebase Firestore
 - ✅ İstatistikler
 
@@ -92,6 +96,11 @@ flutter run
   - Klasör ID: `1yAvPlU5LqcDX5HJk55usmkFd1OrNrhe1`
   - Klasör linki: https://drive.google.com/drive/folders/1yAvPlU5LqcDX5HJk55usmkFd1OrNrhe1
   - Bu klasör ID'si Supabase secrets'a `GOOGLE_DRIVE_FOLDER_ID` olarak eklenmelidir
+- **Google Sheets Sabit Giderler:** Sabit giderler Google Sheets'ten dinamik olarak okunur
+  - Sheets ID: `1_M2g7x4DQs8OQuZzrk4qWkLTMFGRrd-1`
+  - Sheets linki: https://docs.google.com/spreadsheets/d/1_M2g7x4DQs8OQuZzrk4qWkLTMFGRrd-1/edit
+  - Yeni eklenen satırlar otomatik olarak uygulamada görünecektir
+  - Sheets formatı: Açıklama, Tutar, Kişi, Kategori, Tekrarlama, Notlar, Aktif/Pasif
 - **ÖNEMLİ:** Supabase anon key'i `app/lib/services/upload_service.dart` dosyasında güncellenmelidir
   - Supabase Dashboard > Settings > API > anon public key'i kopyalayın
   - `upload_service.dart` dosyasındaki `supabaseAnonKey` değişkenini güncelleyin

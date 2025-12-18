@@ -8,6 +8,9 @@ class AppConfig {
 
   // Backend Configuration
   static const String productionBackendUrl = 'https://nemwuunbowzuuyvhmehi.supabase.co/functions/v1/upload';
+  
+  // Google Sheets Configuration
+  static const String googleSheetsFixedExpensesId = '1_M2g7x4DQs8OQuZzrk4qWkLTMFGRrd-1';
 
   // Network Configuration
   static const int uploadTimeoutSeconds = 30;

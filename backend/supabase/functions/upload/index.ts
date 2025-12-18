@@ -13,6 +13,7 @@ const corsHeaders = {
 
 const GOOGLE_DRIVE_API = 'https://www.googleapis.com/upload/drive/v3';
 const GOOGLE_DRIVE_API_V3 = 'https://www.googleapis.com/drive/v3';
+const GOOGLE_SHEETS_API = 'https://sheets.googleapis.com/v4/spreadsheets';
 
 // @ts-ignore
 declare const Deno: { env: { get(key: string): string | undefined } };
@@ -108,6 +109,102 @@ serve(async (req) => {
       return new Response(JSON.stringify({ status: 'ok', message: 'Upload function ready' }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
+    }
+
+    // ============ GET FIXED EXPENSES FROM GOOGLE SHEETS (GET with endpoint=fixed-expenses) ============
+    if (req.method === 'GET' && endpoint === 'fixed-expenses') {
+      const token = await getAccessToken();
+      if (!token) {
+        return new Response(JSON.stringify({ error: 'Token alınamadı' }), {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      // Google Sheets dosya ID'si (Supabase secrets'tan alınabilir veya sabit)
+      const spreadsheetId = Deno.env.get('GOOGLE_SHEETS_FIXED_EXPENSES_ID') || '1_M2g7x4DQs8OQuZzrk4qWkLTMFGRrd-1';
+      const range = 'Sheet1!A:Z'; // Tüm sütunları oku (A'dan Z'ye)
+
+      try {
+        const sheetsResp = await fetch(
+          `${GOOGLE_SHEETS_API}/${spreadsheetId}/values/${range}?valueRenderOption=UNFORMATTED_VALUE&dateTimeRenderOption=FORMATTED_STRING`,
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+
+        if (!sheetsResp.ok) {
+          const errorText = await sheetsResp.text();
+          console.error('Google Sheets API error:', errorText);
+          return new Response(JSON.stringify({ error: 'Google Sheets okunamadı', detail: errorText }), {
+            status: sheetsResp.status,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+
+        const sheetsData = await sheetsResp.json();
+        const values = sheetsData.values || [];
+
+        if (values.length === 0) {
+          return new Response(JSON.stringify({ expenses: [] }), {
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+
+        // İlk satır başlık olabilir, kontrol et
+        let startRow = 0;
+        if (values.length > 0) {
+          const firstRow = values[0].map((v: string) => String(v).toLowerCase()).join('');
+          if (firstRow.includes('açıklama') || firstRow.includes('aciklama') || firstRow.includes('description') || 
+              firstRow.includes('tutar') || firstRow.includes('amount')) {
+            startRow = 1;
+          }
+        }
+
+        // Verileri parse et
+        const expenses = [];
+        for (let i = startRow; i < values.length; i++) {
+          const row = values[i];
+          if (!row || row.length === 0) continue;
+
+          // Minimum sütunlar: Açıklama, Tutar
+          const description = row[0] ? String(row[0]).trim() : '';
+          const amountStr = row[1] ? String(row[1]).trim().replace(/[^\d.,-]/g, '').replace(',', '.') : '0';
+          const amount = parseFloat(amountStr) || 0;
+
+          if (description && amount > 0) {
+            const expense: Record<string, unknown> = {
+              id: `sheet_${i}`,
+              ownerId: 'system',
+              ownerName: row[2] ? String(row[2]).trim() : 'Sistem',
+              description: description,
+              amount: amount,
+              category: row[3] ? String(row[3]).trim() : null,
+              recurrence: row[4] ? String(row[4]).trim().toLowerCase() : null,
+              notes: row[5] ? String(row[5]).trim() : null,
+              isActive: row[6] ? !['hayır', 'hayir', 'pasif', '0', 'false', 'no'].includes(String(row[6]).toLowerCase()) : true,
+              createdAt: new Date().toISOString(),
+            };
+
+            // Boş değerleri null yap
+            if (!expense.category) delete expense.category;
+            if (!expense.recurrence) delete expense.recurrence;
+            if (!expense.notes) delete expense.notes;
+
+            expenses.push(expense);
+          }
+        }
+
+        console.log(`Google Sheets'ten ${expenses.length} sabit gider okundu`);
+
+        return new Response(JSON.stringify({ expenses: expenses }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      } catch (error) {
+        console.error('Google Sheets okuma hatası:', error);
+        return new Response(JSON.stringify({ error: 'Google Sheets okuma hatası', message: String(error) }), {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
     }
 
     // ============ INIT-SHEETS (POST with endpoint=init-sheets) ============
