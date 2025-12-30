@@ -134,6 +134,7 @@ class _HomeScreenState extends State<HomeScreen>
   /// Kullanıcı bilgilerini arka planda Firestore'dan yeniler (non-blocking)
   Future<void> _refreshUserInBackground() async {
     try {
+      
       final firebaseAuth = FirebaseAuth.instance;
       final currentUser = firebaseAuth.currentUser;
       
@@ -253,7 +254,20 @@ class _HomeScreenState extends State<HomeScreen>
                   arguments: _currentUser,
                 );
                 if (result != null && mounted) {
-                  _tabController.animateTo(2);
+                  // İstatistikler sayfasından dönüş sonucu kontrol et
+                  if (result is Map) {
+                    final tabName = result['tab'];
+                    if (tabName == 'all_entries') {
+                      // "Tüm Eklenenler" sekmesine geç (index 2)
+                      _tabController.animateTo(2);
+                    } else if (tabName == 'my_entries') {
+                      // "Eklediklerim" sekmesine geç (index 1)
+                      _tabController.animateTo(1);
+                    } else if (tabName == 'fixed_expenses') {
+                      // "Sabit Giderler" sekmesine geç (index 3)
+                      _tabController.animateTo(3);
+                    }
+                  }
                 }
               } catch (e) {
                 if (mounted) {

@@ -1,9 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:intl/intl.dart';
+import 'dart:async';
 import '../services/firestore_service.dart';
+import '../services/google_sheets_service.dart';
 import '../models/expense_entry.dart';
+import '../models/fixed_expense.dart';
 import '../models/user_profile.dart';
+import '../utils/app_logger.dart';
 
 class StatisticsScreen extends StatefulWidget {
   final UserProfile currentUser;
@@ -18,14 +22,224 @@ class StatisticsScreen extends StatefulWidget {
 }
 
 class _StatisticsScreenState extends State<StatisticsScreen> {
-  DateTime? _selectedDate; // null = Tümü, değer = Seçili tarih (yıl-ay-gün)
-  bool _hasSelectedDay = false; // Gün seçildi mi? (false ise sadece ay seçilmiş)
+  DateTime? _selectedDate; // null = Tümü, değer = Seçili tarih
+  bool _hasSelectedDay = false; // Gün seçildi mi?
+  bool _isYearOnly = false; // Sadece yıl mı seçildi?
   bool _hasReceivedData = false; // İlk veri geldi mi kontrolü
+  List<FixedExpense> _fixedExpenses = []; // Sabit giderler
+  Timer? _refreshTimer;
+  
+  // Cache için
+  List<ExpenseEntry>? _cachedFixedExpenseEntries;
+  DateTime? _cachedDate;
+  bool _cachedHasSelectedDay = false;
+  bool _cachedIsYearOnly = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // Sabit giderleri arka planda yükle, sayfa açılmasını bloklamasın
+    _loadFixedExpenses();
+    // Her 30 saniyede bir otomatik yenile
+    _refreshTimer = Timer.periodic(const Duration(seconds: 30), (timer) {
+      if (mounted) {
+        _loadFixedExpenses();
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _refreshTimer?.cancel();
+    super.dispose();
+  }
+
+  /// Sabit giderleri yükler (async, bloklamaz)
+  Future<void> _loadFixedExpenses() async {
+    // İlk yüklemede loading gösterme, arka planda yükle
+    try {
+      final expenses = await GoogleSheetsService.getFixedExpenses();
+      if (mounted) {
+        setState(() {
+          _fixedExpenses = expenses.where((e) => e.isActive).toList();
+          // Cache'i temizle, yeniden hesaplanacak
+          _cachedFixedExpenseEntries = null;
+        });
+        AppLogger.info('✅ ${_fixedExpenses.length} aktif sabit gider istatistiklere eklendi');
+      }
+    } catch (e) {
+      AppLogger.error('Sabit giderler yüklenirken hata', e);
+      if (mounted) {
+        setState(() {
+          // Hata durumunda boş liste kullan (istatistikler yine de gösterilebilir)
+          _fixedExpenses = [];
+          _cachedFixedExpenseEntries = null;
+        });
+      }
+    }
+  }
+
+  /// Sabit giderleri ExpenseEntry'lere dönüştürür (tarih filtrelemesi için)
+  /// Cache kullanarak performansı artırır
+  List<ExpenseEntry> _convertFixedExpensesToEntries() {
+    // Cache kontrolü - aynı parametrelerle daha önce hesaplanmışsa cache'den dön
+    if (_cachedFixedExpenseEntries != null &&
+        _cachedDate == _selectedDate &&
+        _cachedHasSelectedDay == _hasSelectedDay &&
+        _cachedIsYearOnly == _isYearOnly) {
+      AppLogger.debug('📊 Cache\'den sabit gider entry\'leri döndürülüyor: ${_cachedFixedExpenseEntries!.length}');
+      return _cachedFixedExpenseEntries!;
+    }
+
+    final now = DateTime.now();
+    final entries = <ExpenseEntry>[];
+
+    AppLogger.debug('📊 _convertFixedExpensesToEntries: ${_fixedExpenses.length} sabit gider var, tarih: ${_selectedDate?.toString() ?? "null"}, gün seçili: $_hasSelectedDay, yıl seçili: $_isYearOnly');
+
+    for (final expense in _fixedExpenses) {
+      if (!expense.isActive) {
+        AppLogger.debug('⏭️ Sabit gider pasif, atlanıyor: ${expense.description}');
+        continue;
+      }
+
+      // Tarih filtrelemesi
+      if (_selectedDate != null) {
+        if (_hasSelectedDay) {
+          // Gün seçilmişse: Sadece aylık sabit giderler için o günü ekle
+          if (expense.recurrence == 'monthly' || expense.recurrence == null) {
+            // Aylık sabit giderler için seçilen günün ayına uygun olanları ekle
+            if (expense.startDate == null ||
+                (expense.startDate!.year <= _selectedDate!.year &&
+                 expense.startDate!.month <= _selectedDate!.month)) {
+              entries.add(ExpenseEntry(
+                ownerId: expense.ownerId,
+                ownerName: expense.ownerName,
+                description: expense.description,
+                notes: expense.notes,
+                amount: expense.amount,
+                fileUrl: '',
+                fileType: 'image',
+                driveFileId: '',
+                fixedExpenseId: expense.id,
+                createdAt: DateTime(_selectedDate!.year, _selectedDate!.month, _selectedDate!.day),
+              ));
+            }
+          }
+        } else if (_isYearOnly) {
+          // Yıl seçilmişse: Yıllık ve aylık sabit giderler için
+          if (expense.recurrence == 'yearly') {
+            if (expense.startDate == null || expense.startDate!.year <= _selectedDate!.year) {
+              entries.add(ExpenseEntry(
+                ownerId: expense.ownerId,
+                ownerName: expense.ownerName,
+                description: expense.description,
+                notes: expense.notes,
+                amount: expense.amount,
+                fileUrl: '',
+                fileType: 'image',
+                driveFileId: '',
+                fixedExpenseId: expense.id,
+                createdAt: DateTime(_selectedDate!.year, 1, 1),
+              ));
+            }
+          } else if (expense.recurrence == 'monthly' || expense.recurrence == null) {
+            // Aylık sabit giderler için yılın her ayı için ekle
+            if (expense.startDate == null || expense.startDate!.year <= _selectedDate!.year) {
+              for (int month = 1; month <= 12; month++) {
+                entries.add(ExpenseEntry(
+                  ownerId: expense.ownerId,
+                  ownerName: expense.ownerName,
+                  description: expense.description,
+                  notes: expense.notes,
+                  amount: expense.amount,
+                  fileUrl: '',
+                  fileType: 'image',
+                  driveFileId: '',
+                  fixedExpenseId: expense.id,
+                  createdAt: DateTime(_selectedDate!.year, month, 1),
+                ));
+              }
+            }
+          }
+        } else {
+          // Ay seçilmişse: Sadece aylık sabit giderler için
+          if (expense.recurrence == 'monthly' || expense.recurrence == null) {
+            if (expense.startDate == null ||
+                (expense.startDate!.year <= _selectedDate!.year &&
+                 expense.startDate!.month <= _selectedDate!.month)) {
+              entries.add(ExpenseEntry(
+                ownerId: expense.ownerId,
+                ownerName: expense.ownerName,
+                description: expense.description,
+                notes: expense.notes,
+                amount: expense.amount,
+                fileUrl: '',
+                fileType: 'image',
+                driveFileId: '',
+                fixedExpenseId: expense.id,
+                createdAt: DateTime(_selectedDate!.year, _selectedDate!.month, 1),
+              ));
+            }
+          }
+        }
+      } else {
+        // Tarih seçilmemişse: Tüm aktif sabit giderleri ekle (aylık için 12 ay, yıllık için 1 kez)
+        if (expense.recurrence == 'yearly') {
+          entries.add(ExpenseEntry(
+            ownerId: expense.ownerId,
+            ownerName: expense.ownerName,
+            description: expense.description,
+            notes: expense.notes,
+            amount: expense.amount,
+            fileUrl: '',
+            fileType: 'image',
+            driveFileId: '',
+            fixedExpenseId: expense.id,
+            createdAt: expense.startDate ?? now,
+          ));
+        } else {
+          // Aylık veya belirtilmemiş: Son 12 ay için ekle
+          for (int i = 0; i < 12; i++) {
+            final date = DateTime(now.year, now.month - i, 1);
+            if (expense.startDate == null || expense.startDate!.isBefore(date) || expense.startDate!.isAtSameMomentAs(date)) {
+              entries.add(ExpenseEntry(
+                ownerId: expense.ownerId,
+                ownerName: expense.ownerName,
+                description: expense.description,
+                notes: expense.notes,
+                amount: expense.amount,
+                fileUrl: '',
+                fileType: 'image',
+                driveFileId: '',
+                fixedExpenseId: expense.id,
+                createdAt: date,
+              ));
+            }
+          }
+        }
+      }
+    }
+
+    AppLogger.debug('📊 _convertFixedExpensesToEntries: ${entries.length} entry oluşturuldu');
+    
+    // Cache'e kaydet
+    _cachedFixedExpenseEntries = entries;
+    _cachedDate = _selectedDate;
+    _cachedHasSelectedDay = _hasSelectedDay;
+    _cachedIsYearOnly = _isYearOnly;
+    
+    return entries;
+  }
 
   List<ExpenseEntry> _getFilteredEntries(List<ExpenseEntry> allEntries) {
+    // Sabit giderleri ekle
+    final fixedExpenseEntries = _convertFixedExpensesToEntries();
+    AppLogger.debug('📊 _getFilteredEntries: ${allEntries.length} Firestore entry + ${fixedExpenseEntries.length} sabit gider entry = ${allEntries.length + fixedExpenseEntries.length} toplam');
+    final combinedEntries = [...allEntries, ...fixedExpenseEntries];
+
     // Eğer tarih seçilmemişse (null), tüm kayıtları döndür
     if (_selectedDate == null) {
-      return allEntries;
+      return combinedEntries;
     }
     
     if (_hasSelectedDay) {
@@ -33,17 +247,27 @@ class _StatisticsScreenState extends State<StatisticsScreen> {
       final startDate = DateTime(_selectedDate!.year, _selectedDate!.month, _selectedDate!.day);
       final endDate = DateTime(_selectedDate!.year, _selectedDate!.month, _selectedDate!.day, 23, 59, 59, 999);
 
-      return allEntries.where((entry) {
+      return combinedEntries.where((entry) {
+        if (entry.createdAt == null) return false;
+        return entry.createdAt!.isAfter(startDate.subtract(const Duration(milliseconds: 1))) &&
+               entry.createdAt!.isBefore(endDate.add(const Duration(milliseconds: 1)));
+      }).toList();
+    } else if (_isYearOnly) {
+      // Yıl seçilmişse: O yılın tamamını filtrele
+      final startDate = DateTime(_selectedDate!.year, 1, 1);
+      final endDate = DateTime(_selectedDate!.year, 12, 31, 23, 59, 59, 999);
+
+      return combinedEntries.where((entry) {
         if (entry.createdAt == null) return false;
         return entry.createdAt!.isAfter(startDate.subtract(const Duration(milliseconds: 1))) &&
                entry.createdAt!.isBefore(endDate.add(const Duration(milliseconds: 1)));
       }).toList();
     } else {
-      // Sadece ay seçilmişse: O ayın tamamını filtrele
+      // Ay seçilmişse: O ayın tamamını filtrele
       final startDate = DateTime(_selectedDate!.year, _selectedDate!.month, 1);
       final endDate = DateTime(_selectedDate!.year, _selectedDate!.month + 1, 0, 23, 59, 59, 999);
 
-      return allEntries.where((entry) {
+      return combinedEntries.where((entry) {
         if (entry.createdAt == null) return false;
         return entry.createdAt!.isAfter(startDate.subtract(const Duration(milliseconds: 1))) &&
                entry.createdAt!.isBefore(endDate.add(const Duration(milliseconds: 1)));
@@ -54,17 +278,19 @@ class _StatisticsScreenState extends State<StatisticsScreen> {
   Future<void> _selectDate() async {
     if (!mounted) return;
     
-    // Modal bottom sheet ile stabil açılış
+    final theme = Theme.of(context);
+    
+    // Modal bottom sheet ile filtreleme seçenekleri
     final result = await showModalBottomSheet<String>(
       context: context,
       backgroundColor: Colors.transparent,
-      builder: (context) => Container(
+      builder: (ctx) => Container(
         decoration: BoxDecoration(
-          color: Theme.of(context).colorScheme.surface,
+          color: theme.colorScheme.surface,
           borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
         ),
         padding: EdgeInsets.only(
-          bottom: MediaQuery.of(context).viewInsets.bottom,
+          bottom: MediaQuery.of(ctx).viewInsets.bottom,
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -75,7 +301,7 @@ class _StatisticsScreenState extends State<StatisticsScreen> {
               width: 40,
               height: 4,
               decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.3),
+                color: theme.colorScheme.outline.withValues(alpha: 0.3),
                 borderRadius: BorderRadius.circular(2),
               ),
             ),
@@ -86,28 +312,84 @@ class _StatisticsScreenState extends State<StatisticsScreen> {
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   Text(
-                    'Filtreleme Seçenekleri',
-                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                    'Dönem Seçin',
+                    style: theme.textTheme.titleLarge?.copyWith(
                       fontWeight: FontWeight.w700,
                     ),
                   ),
                   IconButton(
                     icon: const Icon(Icons.close_rounded),
-                    onPressed: () => Navigator.of(context).pop(),
+                    onPressed: () => Navigator.of(ctx).pop(),
                   ),
                 ],
               ),
             ),
-            // Options
+            // Tümü
             ListTile(
-              leading: const Icon(Icons.all_inclusive_rounded),
-              title: const Text('Tümü'),
-              onTap: () => Navigator.of(context).pop('all'),
+              leading: Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.primaryContainer,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(Icons.all_inclusive_rounded, color: theme.colorScheme.primary, size: 20),
+              ),
+              title: const Text('Tüm Zamanlar', style: TextStyle(fontWeight: FontWeight.w600)),
+              subtitle: const Text('Tüm kayıtları göster'),
+              onTap: () => Navigator.of(ctx).pop('all'),
             ),
+            const Divider(height: 1, indent: 72),
+            // Aylık (Öncelikli)
             ListTile(
-              leading: const Icon(Icons.calendar_month_rounded),
-              title: const Text('Tarih Seç'),
-              onTap: () => Navigator.of(context).pop('date'),
+              leading: Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.blue.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Icon(Icons.calendar_month_rounded, color: Colors.blue, size: 20),
+              ),
+              title: const Text('Aylık', style: TextStyle(fontWeight: FontWeight.w600)),
+              subtitle: const Text('Bir ay seçin'),
+              trailing: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: Colors.blue.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: const Text('Önerilen', style: TextStyle(fontSize: 11, color: Colors.blue, fontWeight: FontWeight.w600)),
+              ),
+              onTap: () => Navigator.of(ctx).pop('month'),
+            ),
+            const Divider(height: 1, indent: 72),
+            // Yıllık
+            ListTile(
+              leading: Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.green.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Icon(Icons.calendar_today_rounded, color: Colors.green, size: 20),
+              ),
+              title: const Text('Yıllık', style: TextStyle(fontWeight: FontWeight.w600)),
+              subtitle: const Text('Bir yıl seçin'),
+              onTap: () => Navigator.of(ctx).pop('year'),
+            ),
+            const Divider(height: 1, indent: 72),
+            // Günlük
+            ListTile(
+              leading: Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.orange.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Icon(Icons.today_rounded, color: Colors.orange, size: 20),
+              ),
+              title: const Text('Günlük', style: TextStyle(fontWeight: FontWeight.w600)),
+              subtitle: const Text('Belirli bir gün seçin'),
+              onTap: () => Navigator.of(ctx).pop('day'),
             ),
             const SizedBox(height: 16),
           ],
@@ -115,37 +397,212 @@ class _StatisticsScreenState extends State<StatisticsScreen> {
       ),
     );
 
-    if (!mounted) return;
+    if (!mounted || result == null) return;
 
     if (result == 'all') {
       setState(() {
         _selectedDate = null;
         _hasSelectedDay = false;
       });
-    } else if (result == 'date') {
-      // Tek bir DatePicker ile yıl -> ay -> gün seçimi (aynı dialog'da)
+    } else if (result == 'month') {
+      // Ay seçimi için özel picker
+      await _selectMonth();
+    } else if (result == 'year') {
+      // Yıl seçimi
+      await _selectYear();
+    } else if (result == 'day') {
+      // Gün seçimi
       final DateTime? pickedDate = await showDatePicker(
         context: context,
         initialDate: _selectedDate ?? DateTime.now(),
         firstDate: DateTime(2020),
         lastDate: DateTime.now(),
         locale: const Locale('tr', 'TR'),
-        helpText: 'Tarih Seçin',
+        helpText: 'Gün Seçin',
         cancelText: 'İptal',
         confirmText: 'Seç',
-        initialDatePickerMode: DatePickerMode.year, // Önce yıl seçimi ile başla
       );
 
       if (!mounted) return;
 
-      setState(() {
-        if (pickedDate != null) {
-          // Tarih seçildi
+      if (pickedDate != null) {
+        setState(() {
           _selectedDate = pickedDate;
           _hasSelectedDay = true;
-        }
-      });
+          _isYearOnly = false;
+        });
+      }
     }
+  }
+
+  Future<void> _selectMonth() async {
+    final now = DateTime.now();
+    int selectedYear = _selectedDate?.year ?? now.year;
+    int selectedMonth = _selectedDate?.month ?? now.month;
+    final theme = Theme.of(context);
+
+    final result = await showModalBottomSheet<DateTime>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setModalState) => Container(
+          height: MediaQuery.of(context).size.height * 0.5,
+          decoration: BoxDecoration(
+            color: theme.colorScheme.surface,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+          ),
+          child: Column(
+            children: [
+              // Handle bar
+              Container(
+                margin: const EdgeInsets.only(top: 12, bottom: 8),
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.outline.withValues(alpha: 0.3),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              // Title with year selector
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.chevron_left_rounded),
+                      onPressed: selectedYear > 2020 ? () {
+                        setModalState(() => selectedYear--);
+                      } : null,
+                    ),
+                    Text(
+                      '$selectedYear',
+                      style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.chevron_right_rounded),
+                      onPressed: selectedYear < now.year ? () {
+                        setModalState(() => selectedYear++);
+                      } : null,
+                    ),
+                  ],
+                ),
+              ),
+              // Month grid
+              Expanded(
+                child: GridView.builder(
+                  padding: const EdgeInsets.all(16),
+                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 3,
+                    childAspectRatio: 2,
+                    crossAxisSpacing: 12,
+                    mainAxisSpacing: 12,
+                  ),
+                  itemCount: 12,
+                  itemBuilder: (context, index) {
+                    final month = index + 1;
+                    final isSelected = selectedMonth == month && (_selectedDate?.year == selectedYear);
+                    final isFuture = selectedYear == now.year && month > now.month;
+                    final monthNames = ['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran', 
+                                        'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık'];
+                    
+                    return Material(
+                      color: isSelected 
+                          ? theme.colorScheme.primary 
+                          : theme.colorScheme.surfaceContainerHighest,
+                      borderRadius: BorderRadius.circular(12),
+                      child: InkWell(
+                        onTap: isFuture ? null : () {
+                          Navigator.of(ctx).pop(DateTime(selectedYear, month, 1));
+                        },
+                        borderRadius: BorderRadius.circular(12),
+                        child: Center(
+                          child: Text(
+                            monthNames[index],
+                            style: TextStyle(
+                              color: isFuture 
+                                  ? theme.colorScheme.onSurface.withValues(alpha: 0.3)
+                                  : isSelected 
+                                      ? theme.colorScheme.onPrimary 
+                                      : theme.colorScheme.onSurface,
+                              fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                            ),
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    if (!mounted || result == null) return;
+
+    setState(() {
+      _selectedDate = result;
+      _hasSelectedDay = false;
+      _isYearOnly = false;
+    });
+  }
+
+  Future<void> _selectYear() async {
+    final now = DateTime.now();
+    final theme = Theme.of(context);
+    final years = List.generate(now.year - 2019, (i) => 2020 + i);
+
+    final result = await showModalBottomSheet<int>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Container(
+        decoration: BoxDecoration(
+          color: theme.colorScheme.surface,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              margin: const EdgeInsets.only(top: 12, bottom: 8),
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: theme.colorScheme.outline.withValues(alpha: 0.3),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Text('Yıl Seçin', style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700)),
+            ),
+            ...years.reversed.map((year) => ListTile(
+              leading: Icon(
+                year == (_selectedDate?.year) && !_hasSelectedDay && _selectedDate?.month == 1
+                    ? Icons.check_circle_rounded 
+                    : Icons.circle_outlined,
+                color: theme.colorScheme.primary,
+              ),
+              title: Text('$year', style: const TextStyle(fontWeight: FontWeight.w600)),
+              subtitle: Text(year == now.year ? 'Bu yıl' : ''),
+              onTap: () => Navigator.of(ctx).pop(year),
+            )),
+            const SizedBox(height: 16),
+          ],
+        ),
+      ),
+    );
+
+    if (!mounted || result == null) return;
+
+    setState(() {
+      _selectedDate = DateTime(result, 1, 1);
+      _hasSelectedDay = false;
+      _isYearOnly = true;
+    });
   }
 
   String _calculateDailyAverage(double total, int entryCount) {
@@ -185,36 +642,21 @@ class _StatisticsScreenState extends State<StatisticsScreen> {
 
     return Scaffold(
       backgroundColor: isDark ? const Color(0xFF0F172A) : const Color(0xFFF8FAFC),
-      extendBodyBehindAppBar: false,
       appBar: AppBar(
-        toolbarHeight: 110,
+        toolbarHeight: 56,
         automaticallyImplyLeading: true,
-        centerTitle: false,
-        title: Image.asset(
-          'assets/logo_header.png',
-          height: 85,
-          width: 85,
-          fit: BoxFit.contain,
-          errorBuilder: (context, error, stackTrace) {
-            return Icon(
-              Icons.bar_chart_rounded,
-              size: 64,
-              color: theme.colorScheme.primary,
-            );
-          },
+        centerTitle: true,
+        title: Text(
+          'İstatistikler',
+          style: theme.textTheme.titleLarge?.copyWith(
+            fontWeight: FontWeight.w700,
+          ),
         ),
-        titleSpacing: 16,
-        elevation: 1,
+        elevation: 0,
         backgroundColor: theme.colorScheme.surface,
-        actions: const [], // Filtreleme sadece _PremiumFilterCard'da
       ),
-      body: SafeArea(
-        top: false,
-        bottom: true,
-        child: Padding(
-          padding: EdgeInsets.zero,
-          child: StreamBuilder<List<ExpenseEntry>>(
-        stream: FirestoreService.streamMyEntries(widget.currentUser.userId),
+      body: StreamBuilder<List<ExpenseEntry>>(
+        stream: FirestoreService.streamAllEntries(),
         builder: (context, snapshot) {
           // Hata durumu
           if (snapshot.hasError) {
@@ -261,11 +703,23 @@ class _StatisticsScreenState extends State<StatisticsScreen> {
             );
           }
 
-          // Loading durumu
-          if (snapshot.connectionState == ConnectionState.waiting && !snapshot.hasData) {
+          // Loading durumu - sadece ilk yüklemede göster
+          if (snapshot.connectionState == ConnectionState.waiting && !snapshot.hasData && !_hasReceivedData) {
             return Center(
-              child: CircularProgressIndicator(
-                color: theme.colorScheme.primary,
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  CircularProgressIndicator(
+                    color: theme.colorScheme.primary,
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    'İstatistikler yükleniyor...',
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
+                    ),
+                  ),
+                ],
               ),
             );
           }
@@ -283,34 +737,99 @@ class _StatisticsScreenState extends State<StatisticsScreen> {
           }
           
           final filteredEntries = _getFilteredEntries(allEntries);
-          final total = filteredEntries.fold(0.0, (sum, entry) => sum + entry.amount);
-          final averageAmount = filteredEntries.isEmpty ? 0.0 : total / filteredEntries.length;
-          final entryCount = filteredEntries.length;
+          
+          // Gerçek entry sayısı (sabit giderlerden oluşturulan entry'ler hariç)
+          final realEntryCount = filteredEntries.where((e) => e.fixedExpenseId == null).length;
+          
+          // Debug: Sabit giderler ve toplam entry sayısını logla
+          final realEntries = filteredEntries.where((e) => e.fixedExpenseId == null).toList();
+          final realTotal = realEntries.fold(0.0, (sum, entry) => sum + entry.amount);
+          
+          // Yıllık toplam hesapla: İçinde bulunduğumuz yıl için gerçek harcamalar + Yıllık sabit giderler + Aylık sabit giderler (yıl başından bugüne kadar geçen aylar)
+          final now = DateTime.now();
+          final yearStart = DateTime(now.year, 1, 1);
+          final currentYearRealEntries = allEntries.where((entry) {
+            if (entry.createdAt == null) return false;
+            return entry.createdAt!.isAfter(yearStart.subtract(const Duration(days: 1))) && 
+                   entry.createdAt!.isBefore(now.add(const Duration(days: 1)));
+          }).toList();
+          final currentYearRealTotal = currentYearRealEntries.fold(0.0, (sum, entry) => sum + entry.amount);
+          
+          // Yıllık sabit giderler
+          final yearlyFixedExpenses = _fixedExpenses.where((e) => e.isActive && e.recurrence == 'yearly').toList();
+          final yearlyFixedTotal = yearlyFixedExpenses.fold(0.0, (sum, expense) => sum + expense.amount);
+          
+          // Aylık sabit giderler (yıl başından bugüne kadar geçen aylar)
+          final monthlyFixedExpenses = _fixedExpenses.where((e) => e.isActive && (e.recurrence == 'monthly' || e.recurrence == null)).toList();
+          final monthsPassed = now.month; // Yıl başından bugüne kadar geçen ay sayısı
+          final monthlyFixedTotal = monthlyFixedExpenses.fold(0.0, (sum, expense) => sum + expense.amount) * monthsPassed;
+          
+          // Yıllık toplam = İçinde bulunduğumuz yıldaki gerçek harcamalar + Yıllık sabit giderler + Aylık sabit giderler (geçen aylar)
+          final yearlyTotal = currentYearRealTotal + yearlyFixedTotal + monthlyFixedTotal;
+          
+          AppLogger.debug('📊 İstatistikler: ${allEntries.length} Firestore entry, ${_fixedExpenses.length} sabit gider, ${filteredEntries.length} toplam filtrelenmiş entry, ${realEntryCount} gerçek entry');
+          AppLogger.debug('📊 Yıllık Toplam: ${now.year} yılı gerçek=${currentYearRealTotal}₺, Yıllık sabit=${yearlyFixedTotal}₺, Aylık sabit (${monthsPassed} ay)=${monthlyFixedTotal}₺, Toplam=${yearlyTotal}₺');
+          
+          // Seçili filtreye göre toplam
+          final total = _selectedDate == null 
+              ? yearlyTotal  // Tüm zamanlar seçildiğinde yıllık toplam
+              : realTotal;   // Tarih seçildiğinde sadece o dönemin gerçek harcamaları
+          final averageAmount = realEntryCount > 0 ? filteredEntries.where((e) => e.fixedExpenseId == null).fold(0.0, (sum, entry) => sum + entry.amount) / realEntryCount : 0.0;
+          final entryCount = realEntryCount; // Gerçek entry sayısını kullan
 
           // Filtreleme metinleri
           final String filterText;
           final String filterSubtext;
           if (_selectedDate == null) {
-            filterText = 'Tüm Kayıtlar';
-            filterSubtext = 'Filtreleme';
+            filterText = 'Tüm Zamanlar';
+            filterSubtext = 'Dönem seçmek için dokunun';
           } else if (_hasSelectedDay) {
             // Gün seçilmişse
             filterText = DateFormat('dd MMMM yyyy', kIsWeb ? null : 'tr_TR').format(_selectedDate!);
-            filterSubtext = 'Seçili Tarih';
+            filterSubtext = 'Günlük Görünüm';
+          } else if (_isYearOnly) {
+            // Yıl seçilmişse
+            filterText = '${_selectedDate!.year} Yılı';
+            filterSubtext = 'Yıllık Görünüm';
           } else {
-            // Sadece ay seçilmişse
+            // Ay seçilmişse
             filterText = DateFormat('MMMM yyyy', kIsWeb ? null : 'tr_TR').format(_selectedDate!);
-            filterSubtext = 'Seçili Ay';
+            filterSubtext = 'Aylık Görünüm';
           }
 
-          return Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 800),
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.only(left: 20, right: 20, top: 0, bottom: 12),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
+          return ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 800),
+            child: SingleChildScrollView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              padding: const EdgeInsets.only(left: 20, right: 20, top: 16, bottom: 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                // Sayfa başlığı ve açıklama
+                Container(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Harcama Özeti',
+                        style: theme.textTheme.headlineSmall?.copyWith(
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: -0.5,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Eklediğiniz kayıtların istatistikleri',
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 12),
+                
                 // Kompakt filtre kartı
                 _PremiumFilterCard(
                   filterText: filterText,
@@ -322,7 +841,13 @@ class _StatisticsScreenState extends State<StatisticsScreen> {
                 
                 // Ana istatistik kartı - Toplam
                 _HeroStatCard(
-                  title: 'Toplam Harcama',
+                  title: _selectedDate == null 
+                      ? 'Yıllık Toplam Harcamanız'
+                      : (_hasSelectedDay 
+                          ? 'Günlük Harcamanız'
+                          : (_isYearOnly 
+                              ? 'Yıllık Harcamanız'
+                              : 'O Ayın Toplam Harcaması')),
                   value: NumberFormat.currency(
                     symbol: '₺',
                     decimalDigits: 2,
@@ -339,10 +864,8 @@ class _StatisticsScreenState extends State<StatisticsScreen> {
                   ),
                   theme: theme,
                   onTap: () {
-                    // Home screen'e dön - tüm kayıtları göster
-                    Navigator.of(context).pop();
-                    // "Tüm Eklenenler" sekmesine geçmek için home screen'e sinyal gönder
-                    // Home screen zaten açık olduğu için sadece pop yeterli
+                    // Home screen'e dön ve "Tüm Eklenenler" sekmesine geç
+                    Navigator.of(context).pop({'tab': 'all_entries'});
                   },
                 ),
                 const SizedBox(height: 16),
@@ -352,60 +875,62 @@ class _StatisticsScreenState extends State<StatisticsScreen> {
                   children: [
                     Expanded(
                       child: _CompactStatCard(
-                        title: 'Ortalama',
+                        title: 'Kayıt Başına Ortalama',
                         value: NumberFormat.currency(
                           symbol: '₺',
-                          decimalDigits: 2,
+                          decimalDigits: 0,
                           locale: 'tr_TR',
                         ).format(averageAmount),
                         icon: Icons.trending_up_rounded,
                         color: theme.colorScheme.secondary,
                         theme: theme,
                         onTap: () {
-                          Navigator.of(context).pop();
+                          // Home screen'e dön ve "Tüm Eklenenler" sekmesine geç
+                          Navigator.of(context).pop({'tab': 'all_entries'});
                         },
                       ),
                     ),
                     const SizedBox(width: 12),
                     Expanded(
                       child: _CompactStatCard(
-                        title: 'Kayıt',
-                        value: '$entryCount',
+                        title: 'Toplam Kayıt Sayısı',
+                        value: '$entryCount adet',
                         icon: Icons.receipt_long_rounded,
                         color: theme.colorScheme.tertiary,
                         theme: theme,
                         onTap: () {
-                          Navigator.of(context).pop(_selectedDate);
+                          // Home screen'e dön ve "Tüm Eklenenler" sekmesine geç
+                          Navigator.of(context).pop({'tab': 'all_entries'});
                         },
                       ),
                     ),
                   ],
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: 12),
                 Row(
                   children: [
                     Expanded(
                       child: _CompactStatCard(
-                        title: 'Günlük Ort.',
+                        title: 'Günlük Ortalama',
                         value: _calculateDailyAverage(total, entryCount),
                         icon: Icons.calendar_view_day_rounded,
                         color: Colors.orange,
                         theme: theme,
                         onTap: () {
-                          // Home screen'e dön - seçili tarih filtresi varsa göster
-                          Navigator.of(context).pop(_selectedDate);
+                          // Home screen'e dön ve "Tüm Eklenenler" sekmesine geç
+                          Navigator.of(context).pop({'tab': 'all_entries'});
                         },
                       ),
                     ),
-                    const SizedBox(width: 16),
+                    const SizedBox(width: 12),
                     Expanded(
                       child: _CompactStatCard(
-                        title: 'En Yüksek',
+                        title: 'En Yüksek Harcama',
                         value: filteredEntries.isEmpty
                             ? '₺0'
                             : NumberFormat.currency(
                                 symbol: '₺',
-                                decimalDigits: 2,
+                                decimalDigits: 0,
                                 locale: 'tr_TR',
                               ).format(
                                 filteredEntries.map((e) => e.amount).reduce((a, b) => a > b ? a : b),
@@ -414,34 +939,40 @@ class _StatisticsScreenState extends State<StatisticsScreen> {
                         color: Colors.red,
                         theme: theme,
                         onTap: () {
-                          // Home screen'e dön - seçili tarih filtresi varsa göster
-                          Navigator.of(context).pop(_selectedDate);
+                          // Home screen'e dön ve "Tüm Eklenenler" sekmesine geç
+                          Navigator.of(context).pop({'tab': 'all_entries'});
                         },
                       ),
                     ),
                   ],
                 ),
                 
-                // Günlük dağılım - sadece ay seçilmişse göster (gün seçildiyse günlük dağılım göstermeye gerek yok)
-                if (_selectedDate != null && !_hasSelectedDay && filteredEntries.isNotEmpty) ...[
+                // Ay harcamaları detayı - sadece ay seçilmişse göster (gün veya yıl seçildiyse gösterme)
+                if (_selectedDate != null && !_hasSelectedDay && !_isYearOnly) ...[
                   const SizedBox(height: 32),
                   _SectionHeader(
                     title: 'Seçili Ay Harcamaları',
                     theme: theme,
                   ),
                   const SizedBox(height: 16),
-                  _DailyBreakdownCard(
-                    entries: filteredEntries,
+                  _MonthlyExpensesCard(
+                    realEntries: realEntries,
+                    fixedExpenses: _fixedExpenses.where((e) => e.isActive && (e.recurrence == 'monthly' || e.recurrence == null)).toList(),
+                    selectedDate: _selectedDate!,
                     theme: theme,
                   ),
-                ] else if (filteredEntries.isEmpty) ...[
+                ] else if (_selectedDate == null && filteredEntries.isEmpty) ...[
+                  // Sadece tarih seçilmediğinde ve hiç veri yoksa boş durum göster
                   const SizedBox(height: 32),
                   _EmptyStateCard(
-                    message: _selectedDate == null 
-                        ? 'Henüz kayıt bulunmuyor'
-                        : (_hasSelectedDay 
-                            ? 'Bu tarih için kayıt bulunamadı'
-                            : 'Bu ay için kayıt bulunamadı'),
+                    message: 'Henüz kayıt bulunmuyor',
+                    theme: theme,
+                  ),
+                ] else if (_selectedDate != null && _hasSelectedDay && filteredEntries.isEmpty) ...[
+                  // Gün seçildiğinde ve veri yoksa boş durum göster
+                  const SizedBox(height: 32),
+                  _EmptyStateCard(
+                    message: 'Bu tarih için kayıt bulunamadı',
                     theme: theme,
                   ),
                 ],
@@ -449,15 +980,12 @@ class _StatisticsScreenState extends State<StatisticsScreen> {
                   ],
                 ),
               ),
-            ),
-          );
-        },
-      ),
+            );
+          },
         ),
-      ),
-    );
+      );
+    }
   }
-}
 
 // Premium Filter Card
 class _PremiumFilterCard extends StatelessWidget {
@@ -710,6 +1238,7 @@ class _CompactStatCard extends StatelessWidget {
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Container(
                       padding: const EdgeInsets.all(8),
@@ -723,22 +1252,23 @@ class _CompactStatCard extends StatelessWidget {
                         size: 18,
                       ),
                     ),
-                    const SizedBox(width: 10),
+                    const SizedBox(width: 8),
                     Expanded(
                       child: Text(
                         title,
                         style: theme.textTheme.bodySmall?.copyWith(
                           color: theme.colorScheme.onSurface.withValues(alpha: 0.7),
                           fontWeight: FontWeight.w600,
-                          fontSize: 12,
+                          fontSize: 11,
+                          height: 1.2,
                         ),
-                        maxLines: 1,
+                        maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                       ),
                     ),
                   ],
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: 4),
                 FittedBox(
                   fit: BoxFit.scaleDown,
                   alignment: Alignment.centerLeft,
@@ -788,52 +1318,37 @@ class _SectionHeader extends StatelessWidget {
   }
 }
 
-// Daily Breakdown Card
-class _DailyBreakdownCard extends StatelessWidget {
-  final List<ExpenseEntry> entries;
+// Monthly Expenses Card - Sabit harcamalar ve gerçek harcamaları listeler
+class _MonthlyExpensesCard extends StatelessWidget {
+  final List<ExpenseEntry> realEntries;
+  final List<FixedExpense> fixedExpenses;
+  final DateTime selectedDate;
   final ThemeData theme;
 
-  const _DailyBreakdownCard({
-    required this.entries,
+  const _MonthlyExpensesCard({
+    required this.realEntries,
+    required this.fixedExpenses,
+    required this.selectedDate,
     required this.theme,
   });
 
   @override
   Widget build(BuildContext context) {
-    final Map<int, double> dailyTotals = {};
+    // Sabit harcamaları filtrele - sadece seçili ay için geçerli olanlar
+    final monthlyFixedExpenses = fixedExpenses.where((expense) {
+      if (expense.startDate == null) return true;
+      return expense.startDate!.year <= selectedDate.year && 
+             expense.startDate!.month <= selectedDate.month;
+    }).toList();
 
-    for (var entry in entries) {
-      if (entry.createdAt != null) {
-        final day = entry.createdAt!.day;
-        dailyTotals[day] = (dailyTotals[day] ?? 0) + entry.amount;
-      }
-    }
-
-    final sortedDays = dailyTotals.keys.toList()..sort();
-    final maxAmount = dailyTotals.values.isEmpty
-        ? 1.0
-        : dailyTotals.values.reduce((a, b) => a > b ? a : b);
-
-    if (sortedDays.isEmpty) {
-      return Container(
-        padding: const EdgeInsets.all(32),
-        decoration: BoxDecoration(
-          color: theme.colorScheme.surface,
-          borderRadius: BorderRadius.circular(24),
-          border: Border.all(
-            color: theme.colorScheme.outline.withValues(alpha: 0.08),
-          ),
-        ),
-        child: Center(
-          child: Text(
-            'Bu ay için günlük veri bulunamadı',
-            style: theme.textTheme.bodyMedium?.copyWith(
-              color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
-            ),
-          ),
-        ),
-      );
-    }
+    // Gerçek harcamaları tarihe göre sırala
+    final sortedRealEntries = List<ExpenseEntry>.from(realEntries)
+      ..sort((a, b) {
+        if (a.createdAt == null && b.createdAt == null) return 0;
+        if (a.createdAt == null) return 1;
+        if (b.createdAt == null) return -1;
+        return b.createdAt!.compareTo(a.createdAt!);
+      });
 
     return Container(
       decoration: BoxDecoration(
@@ -853,83 +1368,199 @@ class _DailyBreakdownCard extends StatelessWidget {
       child: Padding(
         padding: const EdgeInsets.all(20),
         child: Column(
-          children: sortedDays.map((day) {
-            final amount = dailyTotals[day]!;
-            final percentage = maxAmount > 0 ? (amount / maxAmount) * 100 : 0.0;
-
-            return Padding(
-              padding: const EdgeInsets.symmetric(vertical: 12),
-              child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Sabit Harcamalar bölümü
+            if (monthlyFixedExpenses.isNotEmpty) ...[
+              Row(
                 children: [
-                  SizedBox(
-                    width: 36,
-                    child: Text(
-                      '$day',
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                        fontWeight: FontWeight.w700,
-                        fontSize: 15,
-                      ),
-                      textAlign: TextAlign.center,
-                    ),
+                  Icon(
+                    Icons.receipt_long_rounded,
+                    size: 20,
+                    color: theme.colorScheme.primary,
                   ),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: Stack(
-                      children: [
-                        Container(
-                          height: 40,
-                          decoration: BoxDecoration(
-                            color: theme.colorScheme.surfaceContainerHighest,
-                            borderRadius: BorderRadius.circular(20),
-                          ),
-                        ),
-                        FractionallySizedBox(
-                          widthFactor: percentage / 100,
-                          child: Container(
-                            height: 40,
-                            decoration: BoxDecoration(
-                              gradient: LinearGradient(
-                                colors: [
-                                  theme.colorScheme.primary,
-                                  theme.colorScheme.primary.withValues(alpha: 0.7),
-                                ],
-                              ),
-                              borderRadius: BorderRadius.circular(20),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: theme.colorScheme.primary.withValues(alpha: 0.3),
-                                  blurRadius: 8,
-                                  offset: const Offset(0, 4),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(width: 16),
-                  SizedBox(
-                    width: 100,
-                    child: Text(
-                      NumberFormat.currency(
-                        symbol: '₺',
-                        decimalDigits: 2,
-                        locale: 'tr_TR',
-                      ).format(amount),
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                        fontWeight: FontWeight.w700,
-                        fontSize: 14,
-                      ),
-                      textAlign: TextAlign.right,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+                  const SizedBox(width: 8),
+                  Text(
+                    'Sabit Harcamalar',
+                    style: theme.textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w700,
+                      fontSize: 18,
                     ),
                   ),
                 ],
               ),
-            );
-          }).toList(),
+              const SizedBox(height: 12),
+              ...monthlyFixedExpenses.map((expense) {
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 40,
+                        height: 40,
+                        decoration: BoxDecoration(
+                          color: theme.colorScheme.primaryContainer.withValues(alpha: 0.3),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Icon(
+                          Icons.repeat_rounded,
+                          size: 20,
+                          color: theme.colorScheme.primary,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              expense.description,
+                              style: theme.textTheme.bodyMedium?.copyWith(
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            if (expense.notes != null && expense.notes!.isNotEmpty)
+                              Text(
+                                expense.notes!,
+                                style: theme.textTheme.bodySmall?.copyWith(
+                                  color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Text(
+                        NumberFormat.currency(
+                          symbol: '₺',
+                          decimalDigits: 2,
+                          locale: 'tr_TR',
+                        ).format(expense.amount),
+                        style: theme.textTheme.bodyLarge?.copyWith(
+                          fontWeight: FontWeight.w700,
+                          color: theme.colorScheme.primary,
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              }),
+              if (sortedRealEntries.isNotEmpty) ...[
+                const SizedBox(height: 20),
+                Divider(
+                  height: 1,
+                  color: theme.colorScheme.outline.withValues(alpha: 0.1),
+                ),
+                const SizedBox(height: 20),
+              ],
+            ],
+            // Gerçek Harcamalar bölümü
+            if (sortedRealEntries.isNotEmpty) ...[
+              Row(
+                children: [
+                  Icon(
+                    Icons.shopping_cart_rounded,
+                    size: 20,
+                    color: theme.colorScheme.secondary,
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    'Gerçek Harcamalar',
+                    style: theme.textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w700,
+                      fontSize: 18,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              ...sortedRealEntries.take(20).map((entry) {
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 40,
+                        height: 40,
+                        decoration: BoxDecoration(
+                          color: theme.colorScheme.secondaryContainer.withValues(alpha: 0.3),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Icon(
+                          entry.fileType == 'pdf' 
+                              ? Icons.picture_as_pdf_rounded 
+                              : Icons.image_rounded,
+                          size: 20,
+                          color: theme.colorScheme.secondary,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              entry.description,
+                              style: theme.textTheme.bodyMedium?.copyWith(
+                                fontWeight: FontWeight.w600,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            if (entry.createdAt != null)
+                              Text(
+                                DateFormat('dd.MM.yyyy', kIsWeb ? null : 'tr_TR').format(entry.createdAt!),
+                                style: theme.textTheme.bodySmall?.copyWith(
+                                  color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Text(
+                        NumberFormat.currency(
+                          symbol: '₺',
+                          decimalDigits: 2,
+                          locale: 'tr_TR',
+                        ).format(entry.amount),
+                        style: theme.textTheme.bodyLarge?.copyWith(
+                          fontWeight: FontWeight.w700,
+                          color: theme.colorScheme.secondary,
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              }),
+              if (sortedRealEntries.length > 20)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Text(
+                    've ${sortedRealEntries.length - 20} harcama daha...',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
+                      fontStyle: FontStyle.italic,
+                    ),
+                  ),
+                ),
+            ],
+            // Boş durum
+            if (monthlyFixedExpenses.isEmpty && sortedRealEntries.isEmpty)
+              Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(32),
+                  child: Text(
+                    'Bu ay için harcama bulunamadı',
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
+                    ),
+                  ),
+                ),
+              ),
+          ],
         ),
       ),
     );

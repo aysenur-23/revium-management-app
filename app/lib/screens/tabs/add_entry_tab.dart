@@ -14,8 +14,6 @@ import '../../services/upload_service.dart';
 import '../../services/firestore_service.dart';
 import '../../services/connectivity_service.dart';
 import '../../widgets/primary_button.dart';
-import '../../models/fixed_expense.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../utils/app_logger.dart';
 
 class AddEntryTab extends StatefulWidget {
@@ -39,7 +37,6 @@ class _AddEntryTabState extends State<AddEntryTab> with AutomaticKeepAliveClient
   Uint8List? _selectedFileBytes; // Web için
   String? _selectedFileName;
   bool _isUploading = false;
-  String? _selectedFixedExpenseId; // Seçilen sabit gider ID'si
 
   @override
   bool get wantKeepAlive => true;
@@ -64,7 +61,7 @@ class _AddEntryTabState extends State<AddEntryTab> with AutomaticKeepAliveClient
           'ownerName': entry.ownerName,
           'amount': entry.amount,
           'description': entry.description,
-          'fileUrl': entry.fileUrl ?? '',
+          'fileUrl': entry.fileUrl,
         };
       }).toList();
 
@@ -77,7 +74,7 @@ class _AddEntryTabState extends State<AddEntryTab> with AutomaticKeepAliveClient
           'ownerName': entry.ownerName,
           'amount': entry.amount,
           'description': entry.description,
-          'fileUrl': entry.fileUrl ?? '',
+          'fileUrl': entry.fileUrl,
         };
       }).toList();
 
@@ -102,18 +99,22 @@ class _AddEntryTabState extends State<AddEntryTab> with AutomaticKeepAliveClient
         // Tüm entry'ler Excel'i
         UploadService.initializeGoogleSheetsWithEntries(formattedAllEntries).catchError((e) {
           AppLogger.warning('Tüm entry\'ler Excel güncellenirken hata: $e');
+          return null;
         }),
         // Kullanıcının entry'leri Excel'i
-        UploadService.createMyEntriesExcel(formattedMyEntries).catchError((e) {
+        UploadService.createMyEntriesExcel(formattedMyEntries, widget.currentUser.fullName).catchError((e) {
           AppLogger.warning('Kullanıcı entry\'leri Excel güncellenirken hata: $e');
+          return null;
         }),
         // Sabit giderler Excel'i
         UploadService.initializeGoogleSheetsWithFixedExpenses(formattedFixedExpenses).catchError((e) {
           AppLogger.warning('Sabit giderler Excel güncellenirken hata: $e');
+          return null;
         }),
         // Tüm veriler Excel'i (settings)
         UploadService.initializeGoogleSheetsWithAllData(formattedAllEntries, formattedFixedExpenses).catchError((e) {
           AppLogger.warning('Tüm veriler Excel güncellenirken hata: $e');
+          return null;
         }),
       ], eagerError: false);
 
@@ -355,7 +356,6 @@ class _AddEntryTabState extends State<AddEntryTab> with AutomaticKeepAliveClient
         driveFileId: uploadResult.fileId,
         mimeType: mimeType,
         fileName: _selectedFileName,
-        fixedExpenseId: _selectedFixedExpenseId,
       );
 
       // Firestore'a kaydet
@@ -372,7 +372,6 @@ class _AddEntryTabState extends State<AddEntryTab> with AutomaticKeepAliveClient
         _selectedFile = null;
         _selectedFileBytes = null;
         _selectedFileName = null;
-        _selectedFixedExpenseId = null;
       });
 
       if (mounted) {
@@ -643,129 +642,6 @@ class _AddEntryTabState extends State<AddEntryTab> with AutomaticKeepAliveClient
               },
               enabled: !_isUploading,
               textInputAction: TextInputAction.next,
-            ),
-            const SizedBox(height: 16),
-            // Sabit Gider Seçimi (Opsiyonel)
-            StreamBuilder<List<FixedExpense>>(
-              stream: FirestoreService.streamAllFixedExpenses(),
-              builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) {
-                  return const SizedBox.shrink();
-                }
-                
-                final fixedExpenses = snapshot.data ?? [];
-                final activeExpenses = fixedExpenses.where((e) => e.isActive).toList();
-                
-                if (activeExpenses.isEmpty) {
-                  return const SizedBox.shrink();
-                }
-                
-                return DropdownButtonFormField<String>(
-                  value: _selectedFixedExpenseId,
-                  decoration: InputDecoration(
-                    labelText: 'Sabit Gider (Opsiyonel)',
-                    hintText: 'Bir sabit gidere bağla',
-                    prefixIcon: Icon(
-                      Icons.receipt_long_rounded,
-                      size: 20,
-                      color: theme.colorScheme.primary,
-                    ),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide(
-                        color: theme.colorScheme.outline.withValues(alpha: 0.2),
-                      ),
-                    ),
-                    enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide(
-                        color: theme.colorScheme.outline.withValues(alpha: 0.2),
-                      ),
-                    ),
-                    focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide(
-                        color: theme.colorScheme.primary,
-                        width: 2,
-                      ),
-                    ),
-                    filled: true,
-                    fillColor: theme.colorScheme.surface,
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 16,
-                    ),
-                  ),
-                  items: [
-                    const DropdownMenuItem<String>(
-                      value: null,
-                      child: Text('Sabit gidere bağlama'),
-                    ),
-                    ...activeExpenses.map((expense) {
-                      return DropdownMenuItem<String>(
-                        value: expense.id,
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(
-                              expense.description,
-                              style: theme.textTheme.bodyMedium?.copyWith(
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                            if (expense.category != null)
-                              Text(
-                                expense.category!,
-                                style: theme.textTheme.bodySmall?.copyWith(
-                                  color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
-                                ),
-                              ),
-                          ],
-                        ),
-                      );
-                    }),
-                  ],
-                  onChanged: _isUploading
-                      ? null
-                      : (value) {
-                          setState(() {
-                            _selectedFixedExpenseId = value;
-                            
-                            // Sabit gider seçildiyse, bilgilerini otomatik doldur
-                            if (value != null) {
-                              final selectedExpense = activeExpenses.firstWhere(
-                                (e) => e.id == value,
-                                orElse: () => activeExpenses.first,
-                              );
-                              
-                              // Miktarı Türkçe formatta doldur
-                              final amountText = selectedExpense.amount.toStringAsFixed(2)
-                                  .replaceAll('.', ',')
-                                  .replaceAllMapped(
-                                    RegExp(r'(\d)(?=(\d{3})+(?!\d))'),
-                                    (match) => '${match.group(1)}.',
-                                  );
-                              _amountController.text = amountText;
-                              
-                              // Açıklama alanını doldur (eğer boşsa)
-                              if (_descriptionController.text.trim().isEmpty) {
-                                _descriptionController.text = selectedExpense.description;
-                              }
-                              
-                              // Notlar alanını doldur (eğer boşsa ve sabit giderde not varsa)
-                              if (_notesController.text.trim().isEmpty && 
-                                  selectedExpense.notes != null && 
-                                  selectedExpense.notes!.isNotEmpty) {
-                                _notesController.text = selectedExpense.notes!;
-                              }
-                            } else {
-                              // Sabit gider seçimi kaldırıldıysa, alanları temizleme (kullanıcı manuel doldurmuş olabilir)
-                            }
-                          });
-                        },
-                );
-              },
             ),
             const SizedBox(height: 16),
             // Açıklama (Opsiyonel)

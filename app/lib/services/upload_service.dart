@@ -534,14 +534,19 @@ class UploadService {
   static Future<Map<String, dynamic>?> initializeGoogleSheetsWithEntries(
     List<Map<String, dynamic>> entries,
   ) async {
-    return _createExcelFile(entries: entries, fileName: 'Tüm Eklenenler.csv');
+    return _createExcelFile(entries: entries, fileName: 'Tum Eklenenler.csv');
   }
 
   /// Excel'i kullanıcının kendi entry'leriyle oluşturur
   static Future<Map<String, dynamic>?> createMyEntriesExcel(
     List<Map<String, dynamic>> entries,
+    String? ownerName,
   ) async {
-    return _createExcelFile(entries: entries, fileName: 'Eklediklerim.csv');
+    // Kullanıcı adını dosya adına ekle
+    final fileName = ownerName != null && ownerName.isNotEmpty
+        ? '$ownerName Eklediklerim.csv'
+        : 'Eklediklerim.csv';
+    return _createExcelFile(entries: entries, fileName: fileName);
   }
 
   /// Excel oluşturma yardımcı fonksiyonu
@@ -647,7 +652,7 @@ class UploadService {
       request.body = jsonEncode({
         'entries': formattedEntries,
         'fixedExpenses': formattedFixedExpenses,
-        'sheetName': 'Tum_Harcamalar', // Sabit dosya adı
+        'sheetName': 'Tum Veriler', // Ayarlar sayfasi icin
       });
 
       AppLogger.info('Excel (All Data) oluşturma isteği: $uri');
@@ -705,7 +710,7 @@ class UploadService {
 
       request.body = jsonEncode({
         'fixedExpenses': formattedFixedExpenses,
-        'sheetName': 'Sabit_Giderler', // Sabit dosya adı
+        'sheetName': 'Sabit Giderler', // Sayfa adı
       });
 
       AppLogger.info('Excel (Fixed Expenses) oluşturma isteği: $uri');

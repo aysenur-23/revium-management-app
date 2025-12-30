@@ -1,0 +1,42 @@
+workflows:
+  ios-workflow:
+    name: iOS Workflow
+    max_build_duration: 120
+    instance_type: mac_mini_m1
+    environment:
+      flutter: stable
+      xcode: latest
+      cocoapods: default
+      groups:
+        - app_store_credentials
+      vars:
+        APP_ID: "com.yourcompany.expensetracker" # Bundle Identifier'ı buraya yazın
+    scripts:
+      - name: Get Flutter dependencies
+        script: |
+          cd app
+          flutter pub get
+      - name: Install CocoaPods dependencies
+        script: |
+          cd app/ios
+          pod install
+      - name: Flutter build ipa
+        script: |
+          cd app
+          flutter build ipa --release
+    artifacts:
+      - app/build/ios/ipa/*.ipa
+    publishing:
+      email:
+        recipients:
+          - your-email@example.com # Email adresinizi yazın
+        notify:
+          success: true
+          failure: false
+      # TestFlight'a otomatik yükleme (opsiyonel)
+      # app_store_connect:
+      #   auth: integration
+      #   submit_to_testflight: true
+      #   beta_groups:
+      #     - Test Group
+

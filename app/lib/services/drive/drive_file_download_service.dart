@@ -9,7 +9,6 @@ import 'dart:async';
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import '../../models/app_file_reference.dart';
-import '../../config/app_config.dart';
 import '../../utils/app_logger.dart';
 import '../upload_service.dart';
 import 'drive_url_builder.dart';
@@ -111,7 +110,7 @@ class DriveFileDownloadService {
           },
         );
         
-        if (fileBytes != null && fileBytes.isNotEmpty) {
+        if (fileBytes.isNotEmpty) {
           AppLogger.info('   → Backend yanıt alındı: ${fileBytes.length} bytes');
           
           // Dosyayı kaydet
@@ -215,7 +214,6 @@ class DriveFileDownloadService {
     }
     
     final contentType = response.headers['content-type'] ?? '';
-    final contentLength = response.headers['content-length'];
     
     // HTML kontrolü
     final isHtml = contentType.contains('text/html') || 

@@ -2,17 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
-import 'package:http/http.dart' as http;
-import 'package:path_provider/path_provider.dart';
-import 'package:share_plus/share_plus.dart';
-import 'package:open_file/open_file.dart';
-import 'dart:io';
-import 'dart:async';
-import 'dart:typed_data';
 import '../models/expense_entry.dart';
 import '../models/app_file_reference.dart';
 import '../utils/app_logger.dart';
-import '../services/upload_service.dart';
 import '../services/file_opener/file_open_service.dart';
 
 class EntryCard extends StatefulWidget {
@@ -35,15 +27,68 @@ class _EntryCardState extends State<EntryCard> {
   bool _showDetails = false; // Detaylar gösteriliyor mu?
 
   void _handleTap() {
-    // Kartta tıklayınca direkt dosyayı aç
-    _openFile(context);
-  }
-  
-  void _handleLongPress() {
-    // Uzun basınca detayları göster/gizle
+    // Kartta tıklayınca detayları göster/gizle
     setState(() {
       _showDetails = !_showDetails;
     });
+  }
+
+  void _showDeleteMenu(BuildContext context, ThemeData theme) {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 40,
+                height: 4,
+                margin: const EdgeInsets.only(bottom: 16),
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.outline.withValues(alpha: 0.3),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              ListTile(
+                leading: Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.red.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Icon(Icons.delete_outline_rounded, color: Colors.red),
+                ),
+                title: const Text(
+                  'Kaydı Sil',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w600,
+                    color: Colors.red,
+                  ),
+                ),
+                subtitle: Text(
+                  widget.entry.description,
+                  style: TextStyle(
+                    color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
+                    fontSize: 13,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                onTap: () {
+                  Navigator.of(ctx).pop();
+                  widget.onDelete?.call();
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   @override
@@ -61,41 +106,41 @@ class _EntryCardState extends State<EntryCard> {
     return RepaintBoundary(
       child: Container(
         margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        decoration: BoxDecoration(
-          color: theme.colorScheme.surface,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(
-            color: theme.colorScheme.outline.withValues(alpha: 0.08),
-            width: 1,
-          ),
-          boxShadow: [
-            BoxShadow(
-              color: theme.colorScheme.shadow.withValues(alpha: 0.05),
-              blurRadius: 4,
-              offset: const Offset(0, 1),
-              spreadRadius: 0,
-            ),
-          ],
-        ),
-        child: Stack(
-          children: [
-            Material(
-              color: Colors.transparent,
-              child: InkWell(
-                onTap: _handleTap,
-                onLongPress: _handleLongPress,
-                borderRadius: BorderRadius.circular(16),
-                splashColor: theme.colorScheme.primary.withValues(alpha: 0.1),
-                highlightColor: theme.colorScheme.primary.withValues(alpha: 0.05),
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  // Üst kısım: İkon, Açıklama, Miktar
+        child: Material(
+          color: const Color(0xFFF8F9FA),
+          borderRadius: BorderRadius.circular(20),
+          elevation: 0,
+          child: InkWell(
+            onTap: _handleTap,
+            borderRadius: BorderRadius.circular(20),
+            splashColor: theme.colorScheme.onSurface.withValues(alpha: 0.06),
+            highlightColor: theme.colorScheme.onSurface.withValues(alpha: 0.08),
+            child: Container(
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(
+                  color: theme.colorScheme.outline.withValues(alpha: 0.05),
+                  width: 0.5,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: theme.colorScheme.shadow.withValues(alpha: 0.03),
+                    blurRadius: 8,
+                    offset: const Offset(0, 2),
+                    spreadRadius: 0,
+                  ),
+                ],
+              ),
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                  // Üst kısım: İkon, Açıklama, Menü butonu
                   Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
                     children: [
                       // Dosya tipi ikonu - kompakt boyut
                       Container(
@@ -108,7 +153,7 @@ class _EntryCardState extends State<EntryCard> {
                         child: Icon(
                           widget.entry.fileType == 'pdf'
                               ? Icons.picture_as_pdf_rounded
-                              : Icons.image_rounded,
+                              : Icons.description_outlined,
                           color: theme.colorScheme.primary,
                           size: 24,
                         ),
@@ -190,39 +235,59 @@ class _EntryCardState extends State<EntryCard> {
                         ],
                       ),
                     ),
-                    const SizedBox(width: 8),
-                    // Miktar badge - kompakt
-                    Container(
+                    // Menü butonu (sadece silme yetkisi varsa) - sağ üstte
+                    if (widget.onDelete != null)
+                      GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: () {
+                          _showDeleteMenu(context, theme);
+                        },
+                        child: Container(
+                          width: 32,
+                          height: 32,
+                          decoration: BoxDecoration(
+                            color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.6),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Icon(
+                            Icons.more_horiz_rounded,
+                            color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
+                            size: 18,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  // Miktar badge - tam genişlik, ortalanmış
+                  SizedBox(
+                    width: double.infinity,
+                    child: Container(
                       padding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 6,
+                        horizontal: 16,
+                        vertical: 10,
                       ),
                       decoration: BoxDecoration(
                         color: theme.colorScheme.primaryContainer,
                         borderRadius: BorderRadius.circular(8),
                       ),
-                      child: FittedBox(
-                        fit: BoxFit.scaleDown,
-                        alignment: Alignment.center,
-                        child: Text(
-                          NumberFormat.currency(
-                            symbol: '₺',
-                            decimalDigits: 0,
-                            locale: 'tr_TR',
-                          ).format(widget.entry.amount),
-                          style: theme.textTheme.bodySmall?.copyWith(
-                            color: theme.colorScheme.onPrimaryContainer,
-                            fontWeight: FontWeight.w700,
-                            fontSize: 13,
-                            letterSpacing: 0,
-                          ),
-                          textAlign: TextAlign.center,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
+                      child: Text(
+                        NumberFormat.currency(
+                          symbol: '₺',
+                          decimalDigits: 0,
+                          locale: 'tr_TR',
+                        ).format(widget.entry.amount),
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          color: theme.colorScheme.onPrimaryContainer,
+                          fontWeight: FontWeight.w700,
+                          fontSize: 15,
+                          letterSpacing: 0,
                         ),
+                        textAlign: TextAlign.center,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                       ),
                     ),
-                    ],
                   ),
                   // Detaylı bilgiler - sadece _showDetails true ise göster
                   if (_showDetails) ...[
@@ -252,33 +317,27 @@ class _EntryCardState extends State<EntryCard> {
                         maxLines: 3,
                       ),
                     ],
-                    // Bilgilendirme mesajı
+                    // Dosya açma butonu
                     const SizedBox(height: 12),
-                    Container(
-                      padding: const EdgeInsets.all(10),
-                      decoration: BoxDecoration(
-                        color: theme.colorScheme.primaryContainer.withValues(alpha: 0.2),
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: Row(
-                        children: [
-                          Icon(
-                            Icons.info_outline_rounded,
-                            size: 16,
-                            color: theme.colorScheme.primary,
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton.icon(
+                        onPressed: () => _openFile(context),
+                        icon: Icon(
+                          widget.entry.fileType == 'pdf'
+                              ? Icons.picture_as_pdf_rounded
+                              : Icons.description_outlined,
+                          size: 20,
+                        ),
+                        label: const Text('Dosyayı Aç'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: theme.colorScheme.primary,
+                          foregroundColor: theme.colorScheme.onPrimary,
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
                           ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              'Karta tıklayarak belgeyi açabilirsiniz',
-                              style: theme.textTheme.bodySmall?.copyWith(
-                                color: theme.colorScheme.primary,
-                                fontSize: 11,
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
-                          ),
-                        ],
+                        ),
                       ),
                     ),
                   ],
@@ -286,77 +345,8 @@ class _EntryCardState extends State<EntryCard> {
               ),
             ),
           ),
-            ),
-            // Menü butonu - sağ üst köşede, görünür ve şık
-            if (widget.onDelete != null)
-              Positioned(
-                top: 4,
-                right: 4,
-                child: Material(
-                  color: Colors.transparent,
-                  child: PopupMenuButton<String>(
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-                    child: Container(
-                      width: 36,
-                      height: 36,
-                      decoration: BoxDecoration(
-                        color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.8),
-                        borderRadius: BorderRadius.circular(10),
-                        border: Border.all(
-                          color: theme.colorScheme.outline.withValues(alpha: 0.15),
-                          width: 1,
-                        ),
-                      ),
-                      child: Icon(
-                        Icons.more_horiz_rounded,
-                        color: theme.colorScheme.onSurface.withValues(alpha: 0.7),
-                        size: 20,
-                      ),
-                    ),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    elevation: 8,
-                    onSelected: (value) {
-                      if (value == 'delete' && widget.onDelete != null) {
-                        widget.onDelete!();
-                      }
-                    },
-                    itemBuilder: (context) => [
-                      PopupMenuItem<String>(
-                        value: 'delete',
-                        child: Row(
-                          children: [
-                            Container(
-                              padding: const EdgeInsets.all(6),
-                              decoration: BoxDecoration(
-                                color: Colors.red.withValues(alpha: 0.1),
-                                borderRadius: BorderRadius.circular(8),
-                              ),
-                              child: const Icon(
-                                Icons.delete_outline_rounded,
-                                color: Colors.red,
-                                size: 18,
-                              ),
-                            ),
-                            const SizedBox(width: 12),
-                            const Text(
-                              'Kaydı Sil',
-                              style: TextStyle(
-                                fontWeight: FontWeight.w500,
-                                color: Colors.red,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-          ],
         ),
+      ),
       ),
     );
   }
@@ -445,12 +435,12 @@ class _EntryCardState extends State<EntryCard> {
             child: Card(
               child: Padding(
                 padding: const EdgeInsets.all(20),
-                child: Column(
+                child: const Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const CircularProgressIndicator(),
-                    const SizedBox(height: 16),
-                    const Text('Dosya yükleniyor...'),
+                    CircularProgressIndicator(),
+                    SizedBox(height: 16),
+                    Text('Dosya yükleniyor...'),
                   ],
                 ),
               ),
@@ -503,7 +493,8 @@ class _EntryCardState extends State<EntryCard> {
         } else if (errorString.contains('401') || errorString.contains('403') || errorString.contains('unauthorized')) {
           errorMessage = 'Yetkilendirme hatası. Lütfen tekrar giriş yapın.';
         } else {
-          errorMessage = 'Dosya açılamadı: ${e.toString().length > 100 ? e.toString().substring(0, 100) + "..." : e.toString()}';
+          final errorStr = e.toString();
+          errorMessage = 'Dosya açılamadı: ${errorStr.length > 100 ? "${errorStr.substring(0, 100)}..." : errorStr}';
         }
         
         ScaffoldMessenger.of(context).showSnackBar(

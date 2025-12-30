@@ -13,9 +13,9 @@ dependencies:
     sdk: flutter
   
   # Firebase
-  firebase_core: ^2.24.2
-  firebase_auth: ^4.15.3
-  cloud_firestore: ^4.13.6
+  firebase_core: ^3.8.1
+  firebase_auth: ^5.5.1
+  cloud_firestore: ^5.6.0
   
   # HTTP istekleri
   http: ^1.2.0
@@ -43,6 +43,7 @@ dependencies:
   
   # PDF görüntüleme
   syncfusion_flutter_pdfviewer: ^28.1.36
+  cross_file: ^0.3.5+1
 
 dev_dependencies:
   flutter_test:

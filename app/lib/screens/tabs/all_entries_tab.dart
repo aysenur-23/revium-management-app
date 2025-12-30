@@ -13,20 +13,10 @@ import '../../widgets/entry_card.dart';
 import '../../widgets/empty_state_widget.dart';
 import '../../widgets/error_retry_widget.dart';
 import '../../widgets/loading_widget.dart';
-import '../../models/expense_entry.dart';
 import '../../config/app_config.dart';
 import '../../utils/app_logger.dart';
 import '../home_screen.dart';
-import 'package:url_launcher/url_launcher.dart';
-import 'package:http/http.dart' as http;
-import 'package:path_provider/path_provider.dart';
-import 'package:open_file/open_file.dart';
-import 'package:share_plus/share_plus.dart';
-import 'dart:typed_data';
 import 'dart:async';
-import 'dart:io';
-import '../../services/file_opener/file_open_service.dart';
-import '../../models/app_file_reference.dart';
 
 class AllEntriesTab extends StatefulWidget {
   final UserProfile? currentUser;
@@ -47,11 +37,25 @@ enum SortOption {
   amountAsc,
 }
 
+enum DateFilterType {
+  all,      // Tüm zamanlar
+  month,    // Aylık
+  year,     // Yıllık
+  day,      // Günlük
+  custom,   // Özel tarih aralığı
+}
+
 class _AllEntriesTabState extends State<AllEntriesTab> with AutomaticKeepAliveClientMixin {
   String? _selectedOwnerFilter;
   DateTimeRange? _selectedDateRange;
   final TextEditingController _searchController = TextEditingController();
   SortOption _sortOption = SortOption.dateDesc;
+  
+  // Gelişmiş tarih filtresi
+  DateFilterType _dateFilterType = DateFilterType.all;
+  DateTime? _selectedMonth;
+  int? _selectedYear;
+  DateTime? _selectedDay;
 
   @override
   bool get wantKeepAlive => true;
@@ -132,60 +136,6 @@ class _AllEntriesTabState extends State<AllEntriesTab> with AutomaticKeepAliveCl
     }
   }
 
-  /// Excel dosyasını Google Drive'dan indirip geçici olarak saklayıp açar (yeni modüler servis)
-  Future<void> _openExcelFromDrive(BuildContext context, String fileId, int entryCount) async {
-    try {
-      AppLogger.info('📥 Excel dosyası açma işlemi başlatıldı');
-      AppLogger.debug('File ID: $fileId');
-      
-      // Loading göster
-      if (context.mounted) {
-        showDialog(
-          context: context,
-          barrierDismissible: false,
-          builder: (context) => Center(
-            child: Card(
-              child: Padding(
-                padding: const EdgeInsets.all(20),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const CircularProgressIndicator(),
-                    const SizedBox(height: 16),
-                    const Text('Excel yükleniyor...'),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        );
-      }
-
-      // AppFileReference oluştur (Excel için)
-      final fileRef = AppFileReference(
-        id: 'excel_$fileId',
-        driveFileId: fileId,
-        name: 'Harcama Takibi.xlsx',
-        mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        createdAt: DateTime.now(),
-        uploadedByUserId: '',
-      );
-
-      // Yeni modüler servis ile aç
-      await FileOpenService.openOrDownloadAndOpen(fileRef);
-
-      // Loading'i kapat
-      if (context.mounted) {
-        Navigator.of(context).pop();
-      }
-    } catch (e, stackTrace) {
-      AppLogger.error('Excel açma hatası', e, stackTrace);
-      // Loading'i kapat
-      if (context.mounted) {
-        Navigator.of(context).pop();
-      }
-    }
-  }
 
   List<ExpenseEntry> _filterEntries(List<ExpenseEntry> entries) {
     var filtered = entries;
@@ -197,37 +147,45 @@ class _AllEntriesTabState extends State<AllEntriesTab> with AutomaticKeepAliveCl
           .toList();
     }
 
-    // Tarih filtresi
-    if (_selectedDateRange != null) {
+    // Gelişmiş tarih filtresi
+    if (_dateFilterType != DateFilterType.all) {
       filtered = filtered.where((entry) {
         if (entry.createdAt == null) return false;
         
-        // Entry tarihini normalize et (sadece tarih kısmı)
-        final entryDate = DateTime(
-          entry.createdAt!.year,
-          entry.createdAt!.month,
-          entry.createdAt!.day,
-        );
+        final entryDate = entry.createdAt!;
         
-        // Seçili tarih aralığını normalize et
-        final startDate = DateTime(
-          _selectedDateRange!.start.year,
-          _selectedDateRange!.start.month,
-          _selectedDateRange!.start.day,
-        );
-        final endDate = DateTime(
-          _selectedDateRange!.end.year,
-          _selectedDateRange!.end.month,
-          _selectedDateRange!.end.day,
-          23,
-          59,
-          59,
-          999,
-        );
-        
-        // Tarih aralığında mı kontrol et (>= startDate && <= endDate)
-        return entryDate.compareTo(startDate) >= 0 &&
-            entryDate.compareTo(endDate) <= 0;
+        switch (_dateFilterType) {
+          case DateFilterType.month:
+            if (_selectedMonth == null) return true;
+            return entryDate.year == _selectedMonth!.year &&
+                   entryDate.month == _selectedMonth!.month;
+          case DateFilterType.year:
+            if (_selectedYear == null) return true;
+            return entryDate.year == _selectedYear;
+          case DateFilterType.day:
+            if (_selectedDay == null) return true;
+            return entryDate.year == _selectedDay!.year &&
+                   entryDate.month == _selectedDay!.month &&
+                   entryDate.day == _selectedDay!.day;
+          case DateFilterType.custom:
+            if (_selectedDateRange == null) return true;
+            final startDate = DateTime(
+              _selectedDateRange!.start.year,
+              _selectedDateRange!.start.month,
+              _selectedDateRange!.start.day,
+            );
+            final endDate = DateTime(
+              _selectedDateRange!.end.year,
+              _selectedDateRange!.end.month,
+              _selectedDateRange!.end.day,
+              23, 59, 59, 999,
+            );
+            final normalizedEntry = DateTime(entryDate.year, entryDate.month, entryDate.day);
+            return normalizedEntry.compareTo(startDate) >= 0 &&
+                   normalizedEntry.compareTo(endDate) <= 0;
+          case DateFilterType.all:
+            return true;
+        }
       }).toList();
     }
 
@@ -277,8 +235,444 @@ class _AllEntriesTabState extends State<AllEntriesTab> with AutomaticKeepAliveCl
     );
     if (picked != null) {
       setState(() {
+        _dateFilterType = DateFilterType.custom;
         _selectedDateRange = picked;
       });
+    }
+  }
+
+  /// Ay seçimi
+  Future<void> _selectMonth(BuildContext context, ThemeData theme) async {
+    final now = DateTime.now();
+    int selectedYear = _selectedMonth?.year ?? now.year;
+    int selectedMonthIndex = (_selectedMonth?.month ?? now.month) - 1;
+    
+    final months = [
+      'Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran',
+      'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık'
+    ];
+    
+    await showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setModalState) => Container(
+          height: MediaQuery.of(context).size.height * 0.5,
+          decoration: BoxDecoration(
+            color: theme.colorScheme.surface,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+          ),
+          child: Column(
+            children: [
+              // Handle bar
+              Container(
+                margin: const EdgeInsets.only(top: 12, bottom: 8),
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.outline.withValues(alpha: 0.3),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              // Başlık
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text('Ay Seçin', style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700)),
+                    IconButton(icon: const Icon(Icons.close_rounded), onPressed: () => Navigator.pop(context)),
+                  ],
+                ),
+              ),
+              // Yıl seçici
+              Container(
+                margin: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.surfaceContainerHighest,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.chevron_left_rounded),
+                      onPressed: () => setModalState(() => selectedYear--),
+                    ),
+                    Text('$selectedYear', style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600)),
+                    IconButton(
+                      icon: const Icon(Icons.chevron_right_rounded),
+                      onPressed: selectedYear < now.year ? () => setModalState(() => selectedYear++) : null,
+                    ),
+                  ],
+                ),
+              ),
+              // Aylar grid
+              Expanded(
+                child: GridView.builder(
+                  padding: const EdgeInsets.all(24),
+                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 3,
+                    mainAxisSpacing: 12,
+                    crossAxisSpacing: 12,
+                    childAspectRatio: 2,
+                  ),
+                  itemCount: 12,
+                  itemBuilder: (context, index) {
+                    final isSelected = selectedMonthIndex == index;
+                    final isFuture = selectedYear == now.year && index > now.month - 1;
+                    
+                    return Material(
+                      color: isSelected ? theme.colorScheme.primary : theme.colorScheme.surfaceContainerHighest,
+                      borderRadius: BorderRadius.circular(12),
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(12),
+                        onTap: isFuture ? null : () {
+                          setModalState(() => selectedMonthIndex = index);
+                        },
+                        child: Center(
+                          child: Text(
+                            months[index],
+                            style: TextStyle(
+                              color: isFuture 
+                                ? theme.colorScheme.onSurface.withValues(alpha: 0.3)
+                                : isSelected 
+                                  ? theme.colorScheme.onPrimary 
+                                  : theme.colorScheme.onSurface,
+                              fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
+                            ),
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+              // Onayla butonu
+              Padding(
+                padding: const EdgeInsets.all(24),
+                child: FilledButton(
+                  onPressed: () {
+                    setState(() {
+                      _dateFilterType = DateFilterType.month;
+                      _selectedMonth = DateTime(selectedYear, selectedMonthIndex + 1);
+                    });
+                    Navigator.pop(context);
+                  },
+                  style: FilledButton.styleFrom(minimumSize: const Size(double.infinity, 48)),
+                  child: Text('${months[selectedMonthIndex]} $selectedYear Seç'),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Yıl seçimi
+  Future<void> _selectYear(BuildContext context, ThemeData theme) async {
+    final now = DateTime.now();
+    final years = List.generate(now.year - 2019, (i) => now.year - i);
+    
+    await showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (context) => Container(
+        height: MediaQuery.of(context).size.height * 0.4,
+        decoration: BoxDecoration(
+          color: theme.colorScheme.surface,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+        ),
+        child: Column(
+          children: [
+            Container(
+              margin: const EdgeInsets.only(top: 12, bottom: 8),
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: theme.colorScheme.outline.withValues(alpha: 0.3),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text('Yıl Seçin', style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700)),
+                  IconButton(icon: const Icon(Icons.close_rounded), onPressed: () => Navigator.pop(context)),
+                ],
+              ),
+            ),
+            Expanded(
+              child: ListView.builder(
+                padding: const EdgeInsets.symmetric(horizontal: 24),
+                itemCount: years.length,
+                itemBuilder: (context, index) {
+                  final year = years[index];
+                  final isSelected = _selectedYear == year;
+                  
+                  return ListTile(
+                    title: Text(
+                      '$year',
+                      style: TextStyle(
+                        fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                        color: isSelected ? theme.colorScheme.primary : null,
+                      ),
+                    ),
+                    trailing: isSelected ? Icon(Icons.check_rounded, color: theme.colorScheme.primary) : null,
+                    onTap: () {
+                      setState(() {
+                        _dateFilterType = DateFilterType.year;
+                        _selectedYear = year;
+                      });
+                      Navigator.pop(context);
+                    },
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Gün seçimi
+  Future<void> _selectDay(BuildContext context) async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _selectedDay ?? DateTime.now(),
+      firstDate: DateTime(2020),
+      lastDate: DateTime.now(),
+      locale: const Locale('tr', 'TR'),
+      helpText: 'Gün Seçin',
+      cancelText: 'İptal',
+      confirmText: 'Seç',
+    );
+    if (picked != null) {
+      setState(() {
+        _dateFilterType = DateFilterType.day;
+        _selectedDay = picked;
+      });
+    }
+  }
+
+  /// Tarih filtresi seçenekleri
+  void _showDateFilterOptions(BuildContext context, ThemeData theme) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (context) => Container(
+        decoration: BoxDecoration(
+          color: theme.colorScheme.surface,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+        ),
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              margin: const EdgeInsets.only(bottom: 16),
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: theme.colorScheme.outline.withValues(alpha: 0.3),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text('Tarih Filtresi', style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700)),
+                IconButton(icon: const Icon(Icons.close_rounded), onPressed: () => Navigator.pop(context)),
+              ],
+            ),
+            const SizedBox(height: 16),
+            // Filtre seçenekleri
+            _buildDateFilterOption(
+              context: context,
+              theme: theme,
+              icon: Icons.all_inclusive_rounded,
+              title: 'Tüm Zamanlar',
+              subtitle: 'Tüm kayıtları göster',
+              isSelected: _dateFilterType == DateFilterType.all,
+              onTap: () {
+                setState(() {
+                  _dateFilterType = DateFilterType.all;
+                  _selectedMonth = null;
+                  _selectedYear = null;
+                  _selectedDay = null;
+                  _selectedDateRange = null;
+                });
+                Navigator.pop(context);
+              },
+            ),
+            _buildDateFilterOption(
+              context: context,
+              theme: theme,
+              icon: Icons.calendar_month_rounded,
+              title: 'Aylık',
+              subtitle: _dateFilterType == DateFilterType.month && _selectedMonth != null
+                  ? DateFormat('MMMM yyyy', 'tr_TR').format(_selectedMonth!)
+                  : 'Belirli bir ay seçin',
+              isSelected: _dateFilterType == DateFilterType.month,
+              isRecommended: true,
+              onTap: () {
+                Navigator.pop(context);
+                _selectMonth(context, theme);
+              },
+            ),
+            _buildDateFilterOption(
+              context: context,
+              theme: theme,
+              icon: Icons.calendar_today_rounded,
+              title: 'Yıllık',
+              subtitle: _dateFilterType == DateFilterType.year && _selectedYear != null
+                  ? '$_selectedYear'
+                  : 'Belirli bir yıl seçin',
+              isSelected: _dateFilterType == DateFilterType.year,
+              onTap: () {
+                Navigator.pop(context);
+                _selectYear(context, theme);
+              },
+            ),
+            _buildDateFilterOption(
+              context: context,
+              theme: theme,
+              icon: Icons.today_rounded,
+              title: 'Günlük',
+              subtitle: _dateFilterType == DateFilterType.day && _selectedDay != null
+                  ? DateFormat('dd MMMM yyyy', 'tr_TR').format(_selectedDay!)
+                  : 'Belirli bir gün seçin',
+              isSelected: _dateFilterType == DateFilterType.day,
+              onTap: () {
+                Navigator.pop(context);
+                _selectDay(context);
+              },
+            ),
+            _buildDateFilterOption(
+              context: context,
+              theme: theme,
+              icon: Icons.date_range_rounded,
+              title: 'Özel Aralık',
+              subtitle: _dateFilterType == DateFilterType.custom && _selectedDateRange != null
+                  ? '${DateFormat('dd.MM.yy', 'tr_TR').format(_selectedDateRange!.start)} - ${DateFormat('dd.MM.yy', 'tr_TR').format(_selectedDateRange!.end)}'
+                  : 'Başlangıç ve bitiş tarihi seçin',
+              isSelected: _dateFilterType == DateFilterType.custom,
+              onTap: () {
+                Navigator.pop(context);
+                _selectDateRange(context);
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDateFilterOption({
+    required BuildContext context,
+    required ThemeData theme,
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required bool isSelected,
+    required VoidCallback onTap,
+    bool isRecommended = false,
+  }) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      decoration: BoxDecoration(
+        color: isSelected ? theme.colorScheme.primaryContainer : theme.colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(16),
+        border: isSelected ? Border.all(color: theme.colorScheme.primary, width: 2) : null,
+      ),
+      child: ListTile(
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+        leading: Container(
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            color: isSelected ? theme.colorScheme.primary : theme.colorScheme.surface,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Icon(icon, color: isSelected ? theme.colorScheme.onPrimary : theme.colorScheme.primary, size: 22),
+        ),
+        title: Row(
+          children: [
+            Text(title, style: TextStyle(fontWeight: FontWeight.w600, color: isSelected ? theme.colorScheme.onPrimaryContainer : null)),
+            if (isRecommended) ...[
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.tertiary,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text('Önerilen', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: theme.colorScheme.onTertiary)),
+              ),
+            ],
+          ],
+        ),
+        subtitle: Text(
+          subtitle,
+          style: TextStyle(
+            fontSize: 12,
+            color: isSelected
+                ? theme.colorScheme.onPrimaryContainer.withValues(alpha: 0.7)
+                : theme.colorScheme.onSurface.withValues(alpha: 0.6),
+          ),
+          overflow: TextOverflow.ellipsis,
+          maxLines: 1,
+        ),
+        trailing: isSelected ? Icon(Icons.check_circle_rounded, color: theme.colorScheme.primary) : const Icon(Icons.chevron_right_rounded),
+        onTap: onTap,
+      ),
+    );
+  }
+
+  IconData _getDateFilterIcon() {
+    switch (_dateFilterType) {
+      case DateFilterType.all:
+        return Icons.all_inclusive_rounded;
+      case DateFilterType.month:
+        return Icons.calendar_month_rounded;
+      case DateFilterType.year:
+        return Icons.calendar_today_rounded;
+      case DateFilterType.day:
+        return Icons.today_rounded;
+      case DateFilterType.custom:
+        return Icons.date_range_rounded;
+    }
+  }
+
+  String _getDateFilterText() {
+    switch (_dateFilterType) {
+      case DateFilterType.all:
+        return 'Tüm Zamanlar';
+      case DateFilterType.month:
+        if (_selectedMonth != null) {
+          return DateFormat('MMMM yyyy', 'tr_TR').format(_selectedMonth!);
+        }
+        return 'Ay Seç';
+      case DateFilterType.year:
+        if (_selectedYear != null) {
+          return '$_selectedYear';
+        }
+        return 'Yıl Seç';
+      case DateFilterType.day:
+        if (_selectedDay != null) {
+          return DateFormat('dd MMMM yyyy', 'tr_TR').format(_selectedDay!);
+        }
+        return 'Gün Seç';
+      case DateFilterType.custom:
+        if (_selectedDateRange != null) {
+          return '${DateFormat('dd.MM.yy', 'tr_TR').format(_selectedDateRange!.start)} - ${DateFormat('dd.MM.yy', 'tr_TR').format(_selectedDateRange!.end)}';
+        }
+        return 'Tarih Aralığı Seç';
     }
   }
 
@@ -360,23 +754,19 @@ class _AllEntriesTabState extends State<AllEntriesTab> with AutomaticKeepAliveCl
             const SizedBox(height: 24),
             // Tarih filtresi
             Text(
-              'Tarih Aralığı',
+              'Tarih Filtresi',
               style: theme.textTheme.titleSmall?.copyWith(
                 fontWeight: FontWeight.w600,
               ),
             ),
             const SizedBox(height: 12),
             OutlinedButton.icon(
-              onPressed: () async {
+              onPressed: () {
                 Navigator.of(context).pop();
-                await _selectDateRange(context);
+                _showDateFilterOptions(context, theme);
               },
-              icon: const Icon(Icons.calendar_today, size: 18),
-              label: Text(
-                _selectedDateRange == null
-                    ? 'Tarih Seç'
-                    : '${DateFormat('dd.MM.yyyy', 'tr_TR').format(_selectedDateRange!.start)} - ${DateFormat('dd.MM.yyyy', 'tr_TR').format(_selectedDateRange!.end)}',
-              ),
+              icon: Icon(_getDateFilterIcon(), size: 18),
+              label: Text(_getDateFilterText()),
               style: OutlinedButton.styleFrom(
                 minimumSize: const Size(double.infinity, 48),
                 shape: RoundedRectangleBorder(
@@ -384,11 +774,15 @@ class _AllEntriesTabState extends State<AllEntriesTab> with AutomaticKeepAliveCl
                 ),
               ),
             ),
-            if (_selectedDateRange != null) ...[
+            if (_dateFilterType != DateFilterType.all) ...[
               const SizedBox(height: 12),
               TextButton.icon(
                 onPressed: () {
                   setState(() {
+                    _dateFilterType = DateFilterType.all;
+                    _selectedMonth = null;
+                    _selectedYear = null;
+                    _selectedDay = null;
                     _selectedDateRange = null;
                   });
                 },
@@ -403,6 +797,10 @@ class _AllEntriesTabState extends State<AllEntriesTab> with AutomaticKeepAliveCl
                 onPressed: () {
                   setState(() {
                     _selectedOwnerFilter = null;
+                    _dateFilterType = DateFilterType.all;
+                    _selectedMonth = null;
+                    _selectedYear = null;
+                    _selectedDay = null;
                     _selectedDateRange = null;
                     _searchController.clear();
                   });
@@ -427,7 +825,7 @@ class _AllEntriesTabState extends State<AllEntriesTab> with AutomaticKeepAliveCl
     if (_selectedOwnerFilter != null && _selectedOwnerFilter != 'Hepsi') {
       count++;
     }
-    if (_selectedDateRange != null) {
+    if (_dateFilterType != DateFilterType.all) {
       count++;
     }
     if (_searchController.text.trim().isNotEmpty) {
@@ -504,9 +902,9 @@ class _AllEntriesTabState extends State<AllEntriesTab> with AutomaticKeepAliveCl
       await FirestoreService.deleteEntry(entry.id!, widget.currentUser!.userId);
 
       // Google Drive'dan dosyayı sil (varsa)
-      if (entry.driveFileId != null && entry.driveFileId!.isNotEmpty) {
+      if (entry.driveFileId.isNotEmpty) {
         try {
-          await UploadService.deleteFile(entry.driveFileId!);
+          await UploadService.deleteFile(entry.driveFileId);
           AppLogger.info('Google Drive dosyası silindi: ${entry.driveFileId}');
         } catch (e) {
           AppLogger.warning('Google Drive dosyası silinirken hata: $e');
@@ -554,7 +952,7 @@ class _AllEntriesTabState extends State<AllEntriesTab> with AutomaticKeepAliveCl
           'ownerName': entry.ownerName,
           'amount': entry.amount,
           'description': entry.description,
-          'fileUrl': entry.fileUrl ?? '',
+          'fileUrl': entry.fileUrl,
         };
       }).toList();
 
@@ -586,7 +984,7 @@ class _AllEntriesTabState extends State<AllEntriesTab> with AutomaticKeepAliveCl
             'ownerName': entry.ownerName,
             'amount': entry.amount,
             'description': entry.description,
-            'fileUrl': entry.fileUrl ?? '',
+            'fileUrl': entry.fileUrl,
           };
         }).toList();
       }
@@ -596,19 +994,23 @@ class _AllEntriesTabState extends State<AllEntriesTab> with AutomaticKeepAliveCl
         // Tüm entry'ler Excel'i
         UploadService.initializeGoogleSheetsWithEntries(formattedAllEntries).catchError((e) {
           AppLogger.warning('Tüm entry\'ler Excel güncellenirken hata: $e');
+          return null;
         }),
         // Kullanıcının entry'leri Excel'i (varsa)
         if (formattedMyEntries.isNotEmpty)
-          UploadService.createMyEntriesExcel(formattedMyEntries).catchError((e) {
+          UploadService.createMyEntriesExcel(formattedMyEntries, widget.currentUser?.fullName).catchError((e) {
             AppLogger.warning('Kullanıcı entry\'leri Excel güncellenirken hata: $e');
+            return null;
           }),
         // Sabit giderler Excel'i
         UploadService.initializeGoogleSheetsWithFixedExpenses(formattedFixedExpenses).catchError((e) {
           AppLogger.warning('Sabit giderler Excel güncellenirken hata: $e');
+          return null;
         }),
         // Tüm veriler Excel'i (settings)
         UploadService.initializeGoogleSheetsWithAllData(formattedAllEntries, formattedFixedExpenses).catchError((e) {
           AppLogger.warning('Tüm veriler Excel güncellenirken hata: $e');
+          return null;
         }),
       ], eagerError: false);
 
@@ -893,12 +1295,19 @@ class _AllEntriesTabState extends State<AllEntriesTab> with AutomaticKeepAliveCl
                 onRefresh: () async {
                   await Future.delayed(const Duration(milliseconds: 500));
                 },
-                child: Column(
-                  children: [
-                    // Kompakt toplam kartı
-                    if (filteredEntries.isNotEmpty)
-                      Container(
-                        margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: ListView.builder(
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  shrinkWrap: false,
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  itemCount: filteredEntries.length + (filteredEntries.isNotEmpty ? 1 : 0),
+                  cacheExtent: AppConfig.listViewCacheExtent.toDouble(),
+                  addAutomaticKeepAlives: false,
+                  addRepaintBoundaries: true,
+                  itemBuilder: (context, index) {
+                    // İlk item toplam kartı
+                    if (index == 0 && filteredEntries.isNotEmpty) {
+                      return Container(
+                        margin: const EdgeInsets.only(bottom: 12, top: 8),
                         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                         decoration: BoxDecoration(
                           color: theme.colorScheme.primaryContainer.withValues(alpha: 0.3),
@@ -937,39 +1346,31 @@ class _AllEntriesTabState extends State<AllEntriesTab> with AutomaticKeepAliveCl
                             ),
                           ],
                         ),
+                      );
+                    }
+                    
+                    // Entry item'ları (index - 1 çünkü ilk item toplam kartı)
+                    final entryIndex = filteredEntries.isNotEmpty ? index - 1 : index;
+                    final entry = widget.currentUser != null && 
+                                 filteredEntries[entryIndex].ownerId == widget.currentUser!.userId &&
+                                 filteredEntries[entryIndex].ownerName.isEmpty
+                      ? filteredEntries[entryIndex].copyWith(ownerName: widget.currentUser!.fullName)
+                      : filteredEntries[entryIndex];
+                    
+                    // Sadece entry'nin sahibi silme yapabilir
+                    final canDelete = widget.currentUser != null && 
+                                    entry.ownerId == widget.currentUser!.userId;
+                    
+                    return RepaintBoundary(
+                      child: Padding(
+                        padding: const EdgeInsets.only(bottom: 12),
+                        child: EntryCard(
+                          entry: entry,
+                          onDelete: canDelete ? () => _deleteEntry(context, entry) : null,
+                        ),
                       ),
-                    // Liste
-                    Expanded(
-                      child: ListView.builder(
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
-                        itemCount: filteredEntries.length,
-                        cacheExtent: AppConfig.listViewCacheExtent.toDouble(),
-                        addAutomaticKeepAlives: false,
-                        addRepaintBoundaries: true,
-                        itemBuilder: (context, index) {
-                          final entry = widget.currentUser != null && 
-                                       filteredEntries[index].ownerId == widget.currentUser!.userId &&
-                                       filteredEntries[index].ownerName.isEmpty
-                            ? filteredEntries[index].copyWith(ownerName: widget.currentUser!.fullName)
-                            : filteredEntries[index];
-                          
-                          // Sadece entry'nin sahibi silme yapabilir
-                          final canDelete = widget.currentUser != null && 
-                                          entry.ownerId == widget.currentUser!.userId;
-                          
-                          return RepaintBoundary(
-                            child: Padding(
-                              padding: const EdgeInsets.only(bottom: 12),
-                              child: EntryCard(
-                                entry: entry,
-                                onDelete: canDelete ? () => _deleteEntry(context, entry) : null,
-                              ),
-                            ),
-                          );
-                        },
-                      ),
-                    ),
-                  ],
+                    );
+                  },
                 ),
               );
             },
@@ -986,10 +1387,11 @@ class _AllEntriesTabState extends State<AllEntriesTab> with AutomaticKeepAliveCl
     final isSmallScreen = MediaQuery.of(context).size.width < 600;
     return Scaffold(
       body: _buildContent(theme, isSmallScreen),
-      floatingActionButton: FloatingActionButton.extended(
+      floatingActionButton: FloatingActionButton(
+        heroTag: 'all_entries_excel_fab',
         onPressed: () => _openExcel(context),
-        icon: const Icon(Icons.table_chart_rounded),
-        label: const Text('Excel'),
+        tooltip: 'Excel',
+        child: const Icon(Icons.table_chart_rounded),
         backgroundColor: theme.colorScheme.primary,
         foregroundColor: theme.colorScheme.onPrimary,
       ),

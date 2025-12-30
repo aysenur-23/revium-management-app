@@ -1,4 +1,4 @@
-name: iOS Build
+name: iOS IPA Build
 
 on:
   push:
@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-ios:
+  build-ipa:
     runs-on: macos-latest
     
     steps:
@@ -29,14 +29,43 @@ jobs:
           cd app/ios
           pod install
       
-      - name: Build iOS
+      # Seçenek 1: Codesign ile IPA (Apple Developer hesabı gerekli)
+      # - name: Import Code Signing Certificate
+      #   uses: apple-actions/import-codesign-certs@v2
+      #   with:
+      #     p12-file-base64: ${{ secrets.CERTIFICATES_P12 }}
+      #     p12-password: ${{ secrets.CERTIFICATES_PASSWORD }}
+      # 
+      # - name: Build IPA with Codesign
+      #   run: |
+      #     cd app
+      #     flutter build ipa --release
+      
+      # Seçenek 2: Codesign olmadan build (Test için)
+      - name: Build iOS (No Codesign)
         run: |
           cd app
           flutter build ios --release --no-codesign
       
-      - name: Upload IPA
-        uses: actions/upload-artifact@v3
+      - name: Create IPA manually
+        run: |
+          cd app/build/ios/iphoneos
+          mkdir -p Payload
+          cp -r Runner.app Payload/
+          zip -r ../../../expense_tracker.ipa Payload
+          rm -rf Payload
+      
+      - name: Upload IPA Artifact
+        uses: actions/upload-artifact@v4
         with:
-          name: ios-build
+          name: expense-tracker-ipa
+          path: app/build/expense_tracker.ipa
+          retention-days: 30
+      
+      - name: Upload Build Info
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-build-info
           path: app/build/ios/iphoneos/Runner.app
+          retention-days: 7
 

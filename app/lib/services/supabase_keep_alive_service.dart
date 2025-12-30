@@ -97,7 +97,19 @@ class SupabaseKeepAliveService {
         return false;
       }
     } catch (e) {
-      AppLogger.error('❌ Supabase keep-alive hatası', e);
+      // Network hataları için özel kontrol
+      final errorString = e.toString().toLowerCase();
+      if (errorString.contains('socketexception') || 
+          errorString.contains('failed host lookup') ||
+          errorString.contains('no address associated with hostname') ||
+          errorString.contains('network is unreachable')) {
+        // İnternet bağlantısı yok - bu normal bir durum, sadece debug log'u
+        AppLogger.debug('📡 Supabase keep-alive: İnternet bağlantısı yok (normal)');
+        return false;
+      }
+      
+      // Diğer hatalar için warning
+      AppLogger.warning('⚠️ Supabase keep-alive hatası: ${e.toString()}');
       return false;
     }
   }

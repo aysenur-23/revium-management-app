@@ -4,7 +4,6 @@
  */
 
 import 'package:flutter/material.dart';
-import 'dart:io';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../../services/firestore_service.dart';
 import '../../services/upload_service.dart';
@@ -17,15 +16,7 @@ import '../../config/app_config.dart';
 import 'package:intl/intl.dart';
 import '../../utils/app_logger.dart';
 import '../home_screen.dart';
-import 'package:url_launcher/url_launcher.dart';
-import 'package:http/http.dart' as http;
-import 'package:path_provider/path_provider.dart';
-import 'package:open_file/open_file.dart';
-import 'package:share_plus/share_plus.dart';
-import 'dart:typed_data';
 import 'dart:async';
-import '../../services/file_opener/file_open_service.dart';
-import '../../models/app_file_reference.dart';
 
 enum MySortOption {
   dateDesc,
@@ -180,7 +171,7 @@ class _MyEntriesTabState extends State<MyEntriesTab> with AutomaticKeepAliveClie
           'ownerName': entry.ownerName,
           'amount': entry.amount,
           'description': entry.description,
-          'fileUrl': entry.fileUrl ?? '',
+          'fileUrl': entry.fileUrl,
         };
       }).toList();
 
@@ -193,7 +184,7 @@ class _MyEntriesTabState extends State<MyEntriesTab> with AutomaticKeepAliveClie
           'ownerName': entry.ownerName,
           'amount': entry.amount,
           'description': entry.description,
-          'fileUrl': entry.fileUrl ?? '',
+          'fileUrl': entry.fileUrl,
         };
       }).toList();
 
@@ -218,18 +209,22 @@ class _MyEntriesTabState extends State<MyEntriesTab> with AutomaticKeepAliveClie
         // Tüm entry'ler Excel'i
         UploadService.initializeGoogleSheetsWithEntries(formattedAllEntries).catchError((e) {
           AppLogger.warning('Tüm entry\'ler Excel güncellenirken hata: $e');
+          return null;
         }),
         // Kullanıcının entry'leri Excel'i
-        UploadService.createMyEntriesExcel(formattedMyEntries).catchError((e) {
+        UploadService.createMyEntriesExcel(formattedMyEntries, widget.currentUser.fullName).catchError((e) {
           AppLogger.warning('Kullanıcı entry\'leri Excel güncellenirken hata: $e');
+          return null;
         }),
         // Sabit giderler Excel'i
         UploadService.initializeGoogleSheetsWithFixedExpenses(formattedFixedExpenses).catchError((e) {
           AppLogger.warning('Sabit giderler Excel güncellenirken hata: $e');
+          return null;
         }),
         // Tüm veriler Excel'i (settings)
         UploadService.initializeGoogleSheetsWithAllData(formattedAllEntries, formattedFixedExpenses).catchError((e) {
           AppLogger.warning('Tüm veriler Excel güncellenirken hata: $e');
+          return null;
         }),
       ], eagerError: false);
 
@@ -243,7 +238,6 @@ class _MyEntriesTabState extends State<MyEntriesTab> with AutomaticKeepAliveClie
   Future<void> _openExcel(BuildContext context) async {
     try {
       AppLogger.info('📊 Excel açma işlemi başlatıldı (Eklediklerim)');
-      AppLogger.debug('Kullanıcı ID: ${widget.currentUser.userId}');
       
       // Loading dialog göster
       if (mounted) {
@@ -268,7 +262,7 @@ class _MyEntriesTabState extends State<MyEntriesTab> with AutomaticKeepAliveClie
         );
       }
 
-      // Kullanıcının kendi entry'lerini al
+      // Kullanıcının entry'lerini al
       AppLogger.info('Firestore\'dan kullanıcının entry\'leri alınıyor...');
       final myEntries = await FirestoreService.getMyEntries(widget.currentUser.userId);
       AppLogger.info('${myEntries.length} entry bulundu');
@@ -297,7 +291,8 @@ class _MyEntriesTabState extends State<MyEntriesTab> with AutomaticKeepAliveClie
       );
       
       AppLogger.success('✅ Excel başarıyla paylaşıldı');
-    } catch (e) {
+    } catch (e, stackTrace) {
+      AppLogger.error('Excel açma hatası', e, stackTrace);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -307,64 +302,9 @@ class _MyEntriesTabState extends State<MyEntriesTab> with AutomaticKeepAliveClie
           ),
         );
       }
-      AppLogger.error('Excel açma hatası', e);
     }
   }
 
-  /// Excel dosyasını Google Drive'dan indirip geçici olarak saklayıp açar (yeni modüler servis)
-  Future<void> _openExcelFromDrive(BuildContext context, String fileId, int entryCount) async {
-    try {
-      AppLogger.info('📥 Excel dosyası açma işlemi başlatıldı');
-      AppLogger.debug('File ID: $fileId');
-      
-      // Loading göster
-      if (context.mounted) {
-        showDialog(
-          context: context,
-          barrierDismissible: false,
-          builder: (context) => Center(
-            child: Card(
-              child: Padding(
-                padding: const EdgeInsets.all(20),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const CircularProgressIndicator(),
-                    const SizedBox(height: 16),
-                    const Text('Excel yükleniyor...'),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        );
-      }
-
-      // AppFileReference oluştur (Excel için)
-      final fileRef = AppFileReference(
-        id: 'excel_$fileId',
-        driveFileId: fileId,
-        name: 'Harcama Takibi.xlsx',
-        mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        createdAt: DateTime.now(),
-        uploadedByUserId: '',
-      );
-
-      // Yeni modüler servis ile aç
-      await FileOpenService.openOrDownloadAndOpen(fileRef);
-
-      // Loading'i kapat
-      if (context.mounted) {
-        Navigator.of(context).pop();
-      }
-    } catch (e, stackTrace) {
-      AppLogger.error('Excel açma hatası', e, stackTrace);
-      // Loading'i kapat
-      if (context.mounted) {
-        Navigator.of(context).pop();
-      }
-    }
-  }
 
   Widget _buildContent(ThemeData theme) {
     return Column(
@@ -624,12 +564,19 @@ class _MyEntriesTabState extends State<MyEntriesTab> with AutomaticKeepAliveClie
                 onRefresh: () async {
                   await Future.delayed(const Duration(milliseconds: 500));
                 },
-                child: Column(
-                  children: [
-                    // Kompakt toplam kartı
-                    if (filteredEntries.isNotEmpty)
-                      Container(
-                        margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: ListView.builder(
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  shrinkWrap: false,
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  itemCount: filteredEntries.length + (filteredEntries.isNotEmpty ? 1 : 0),
+                  cacheExtent: AppConfig.listViewCacheExtent.toDouble(),
+                  addAutomaticKeepAlives: false,
+                  addRepaintBoundaries: true,
+                  itemBuilder: (context, index) {
+                    // İlk item toplam kartı
+                    if (index == 0 && filteredEntries.isNotEmpty) {
+                      return Container(
+                        margin: const EdgeInsets.only(bottom: 12, top: 8),
                         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                         decoration: BoxDecoration(
                           color: theme.colorScheme.primaryContainer.withValues(alpha: 0.3),
@@ -668,33 +615,26 @@ class _MyEntriesTabState extends State<MyEntriesTab> with AutomaticKeepAliveClie
                             ),
                           ],
                         ),
+                      );
+                    }
+                    
+                    // Entry item'ları (index - 1 çünkü ilk item toplam kartı)
+                    final entryIndex = filteredEntries.isNotEmpty ? index - 1 : index;
+                    final entry = filteredEntries[entryIndex];
+                    final displayEntry = entry.ownerName.isEmpty || entry.ownerId == widget.currentUser.userId
+                        ? entry.copyWith(ownerName: widget.currentUser.fullName)
+                        : entry;
+                    return RepaintBoundary(
+                      child: Padding(
+                        padding: const EdgeInsets.only(bottom: 12),
+                        child: EntryCard(
+                          entry: displayEntry,
+                          onDelete: () => _deleteEntry(context, entry),
+                          showOwnerIcon: true,
+                        ),
                       ),
-                    // Export butonu - kompakt
-                    if (filteredEntries.isNotEmpty)
-                    // Liste
-                    Expanded(
-                      child: ListView.builder(
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
-                        itemCount: filteredEntries.length,
-                        cacheExtent: AppConfig.listViewCacheExtent.toDouble(),
-                        addAutomaticKeepAlives: false,
-                        addRepaintBoundaries: true,
-                        itemBuilder: (context, index) {
-                          final entry = filteredEntries[index];
-                          final displayEntry = entry.ownerName.isEmpty || entry.ownerId == widget.currentUser.userId
-                              ? entry.copyWith(ownerName: widget.currentUser.fullName)
-                              : entry;
-                          return RepaintBoundary(
-                            child: EntryCard(
-                              entry: displayEntry,
-                              onDelete: () => _deleteEntry(context, entry),
-                              showOwnerIcon: true,
-                            ),
-                          );
-                        },
-                      ),
-                    ),
-                  ],
+                    );
+                  },
                 ),
               );
             },
@@ -710,10 +650,11 @@ class _MyEntriesTabState extends State<MyEntriesTab> with AutomaticKeepAliveClie
     final theme = Theme.of(context);
     return Scaffold(
       body: _buildContent(theme),
-      floatingActionButton: FloatingActionButton.extended(
+      floatingActionButton: FloatingActionButton(
+        heroTag: 'my_entries_excel_fab',
         onPressed: () => _openExcel(context),
-        icon: const Icon(Icons.table_chart_rounded),
-        label: const Text('Excel'),
+        tooltip: 'Excel',
+        child: const Icon(Icons.table_chart_rounded),
         backgroundColor: theme.colorScheme.primary,
         foregroundColor: theme.colorScheme.onPrimary,
       ),

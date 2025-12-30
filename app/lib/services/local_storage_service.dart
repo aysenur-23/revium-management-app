@@ -58,5 +58,11 @@ class LocalStorageService {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getBool(_keyPasswordResetPending) ?? false;
   }
+
+  /// Şifre sıfırlama flag'ini temizler
+  static Future<void> clearPasswordResetPending() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_keyPasswordResetPending);
+  }
 }
 
