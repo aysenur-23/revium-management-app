@@ -2,12 +2,11 @@
 /// Production ve development için farklı ayarlar
 
 class AppConfig {
-  // Supabase Configuration
-  // NOT: Production'da bu değerler environment variables veya secure storage'dan alınmalı
-  static const String supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5lbXd1dW5ib3d6dXV5dmhtZWhpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjUwMTQ3OTUsImV4cCI6MjA4MDU5MDc5NX0.xHM791yFkBMSCi_EdF7OhdOq9iscD0-dT6sHuNr1JYM';
-
   // Backend Configuration
-  static const String productionBackendUrl = 'https://nemwuunbowzuuyvhmehi.supabase.co/functions/v1/upload';
+  // Firebase Cloud Functions URL formatı: https://[region]-[project-id].cloudfunctions.net/api
+  // NOT: Production'da bu değer Firebase project ID'den otomatik oluşturulmalı
+  // Örnek: https://us-central1-expense-tracker-12345.cloudfunctions.net/api
+  static const String productionBackendUrl = 'https://us-central1-management-app0.cloudfunctions.net/api'; // Firebase Functions URL
   
   // Google Sheets Configuration
   static const String googleSheetsFixedExpensesId = '1Ta2VG93hhih4kRxj_qAUJ5_NrNWCWxKLdRYZNvag-O4';
