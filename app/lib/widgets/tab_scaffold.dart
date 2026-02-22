@@ -1,7 +1,6 @@
-/**
- * Sekme scaffold widget'ı
- * Ortak AppBar ve logo yapısını sağlar
- */
+/// Sekme scaffold widget'ı
+/// Ortak AppBar ve logo yapısını sağlar
+library;
 
 import 'package:flutter/material.dart';
 

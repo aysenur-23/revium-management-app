@@ -1,7 +1,6 @@
-/**
- * Sabit Giderler sekmesi
- * Google Sheets'ten sabit giderleri görüntüler (dinamik okuma)
- */
+/// Sabit Giderler sekmesi
+/// Google Sheets'ten sabit giderleri kart listesi olarak gösterir
+library;
 
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
@@ -49,7 +48,6 @@ class _FixedExpensesTabState extends State<FixedExpensesTab> with AutomaticKeepA
   void initState() {
     super.initState();
     _loadExpensesFromGoogleSheets();
-    // Her 30 saniyede bir otomatik yenile
     _refreshTimer = Timer.periodic(const Duration(seconds: 30), (timer) {
       if (mounted) {
         _loadExpensesFromGoogleSheets();
@@ -64,7 +62,6 @@ class _FixedExpensesTabState extends State<FixedExpensesTab> with AutomaticKeepA
     super.dispose();
   }
 
-  /// Google Sheets'ten sabit giderleri yükler
   Future<void> _loadExpensesFromGoogleSheets() async {
     setState(() {
       _isLoading = true;
@@ -82,12 +79,11 @@ class _FixedExpensesTabState extends State<FixedExpensesTab> with AutomaticKeepA
       AppLogger.error('Google Sheets yükleme hatası', e);
       setState(() {
         _isLoading = false;
-        // Daha kullanıcı dostu ve detaylı hata mesajı
         final errorMsg = e.toString();
         String userFriendlyMessage = '';
         
-        if (errorMsg.contains('Supabase\'e bağlanılamıyor') || errorMsg.contains('İnternet bağlantısı yok')) {
-          userFriendlyMessage = 'Supabase\'e bağlanılamıyor. İnternet bağlantınızı kontrol edin veya daha sonra tekrar deneyin.';
+        if (errorMsg.contains('Backend\'e bağlanılamıyor') || errorMsg.contains('İnternet bağlantısı yok')) {
+          userFriendlyMessage = 'Backend\'e bağlanılamıyor. İnternet bağlantınızı kontrol edin veya daha sonra tekrar deneyin.';
         } else if (errorMsg.contains('zaman aşımı') || errorMsg.contains('timeout')) {
           userFriendlyMessage = 'Google Sheets okuma zaman aşımı. Lütfen tekrar deneyin.';
         } else if (errorMsg.contains('404') || errorMsg.contains('bulunamadı')) {
@@ -95,10 +91,9 @@ class _FixedExpensesTabState extends State<FixedExpensesTab> with AutomaticKeepA
         } else if (errorMsg.contains('403') || errorMsg.contains('erişim izni')) {
           userFriendlyMessage = 'Dosyaya erişim izni yok. Google Sheets dosyasını "Herkes linki olan herkes görüntüleyebilir" olarak paylaşın.';
         } else if (errorMsg.contains('detail')) {
-          // Backend'den gelen detaylı hata mesajını göster
           userFriendlyMessage = errorMsg;
         } else {
-          userFriendlyMessage = 'Sabit giderler yüklenirken hata oluştu:\n${errorMsg.length > 200 ? errorMsg.substring(0, 200) + "..." : errorMsg}';
+          userFriendlyMessage = 'Sabit giderler yüklenirken hata oluştu:\n${errorMsg.length > 200 ? "${errorMsg.substring(0, 200)}..." : errorMsg}';
         }
         
         _errorMessage = userFriendlyMessage;
@@ -106,18 +101,16 @@ class _FixedExpensesTabState extends State<FixedExpensesTab> with AutomaticKeepA
     }
   }
 
-
   @override
   Widget build(BuildContext context) {
     super.build(context);
     final theme = Theme.of(context);
-    final isSmallScreen = MediaQuery.of(context).size.width < 600;
     return Scaffold(
-      body: _buildContent(theme, isSmallScreen),
+      body: _buildContent(theme),
     );
   }
 
-  Widget _buildContent(ThemeData theme, bool isSmallScreen) {
+  Widget _buildContent(ThemeData theme) {
     if (_isLoading) {
       return const LoadingWidget(message: 'Sabit giderler yükleniyor...');
     }
@@ -130,40 +123,34 @@ class _FixedExpensesTabState extends State<FixedExpensesTab> with AutomaticKeepA
     }
 
     if (_expenses.isEmpty) {
-      return EmptyStateWidget(
+      return const EmptyStateWidget(
         title: 'Sabit gider bulunamadı',
         subtitle: 'Google Sheets\'te veri yok veya format hatalı',
         icon: Icons.receipt_long,
       );
     }
 
-    // Filtreleme ve arama
     var filteredExpenses = _expenses;
     
-    // Arama filtresi
     if (_searchController.text.isNotEmpty) {
       final searchLower = _searchController.text.toLowerCase();
       filteredExpenses = filteredExpenses.where((e) {
         return e.description.toLowerCase().contains(searchLower) ||
-               (e.category != null && e.category!.toLowerCase().contains(searchLower)) ||
-               e.ownerName.toLowerCase().contains(searchLower) ||
-               (e.notes != null && e.notes!.toLowerCase().contains(searchLower));
+               (e.category != null && e.category!.toLowerCase().contains(searchLower));
       }).toList();
     }
     
-    // Aktif/pasif filtresi
     if (_showOnlyActive) {
       filteredExpenses = filteredExpenses.where((e) => e.isActive).toList();
     }
     
-    // Sıralama
     filteredExpenses = _sortExpenses(filteredExpenses);
 
     if (filteredExpenses.isEmpty) {
       return Column(
         children: [
-          _buildHeader(theme, isSmallScreen),
-          Expanded(
+          _buildHeader(theme),
+          const Expanded(
             child: EmptyStateWidget(
               title: 'Arama/Filtre sonucu bulunamadı',
               subtitle: 'Farklı bir arama terimi veya filtre deneyin',
@@ -174,15 +161,13 @@ class _FixedExpensesTabState extends State<FixedExpensesTab> with AutomaticKeepA
       );
     }
 
-    // Toplam hesapla (filtrelenmiş ve aktif olanlar)
-    final totalAmount = filteredExpenses.where((e) => e.isActive).fold<double>(
-      0.0,
-      (sum, expense) => sum + expense.amount,
-    );
+    final activeItems = filteredExpenses.where((e) => e.isActive).toList();
+    final totalExpense = activeItems.fold<double>(0.0, (sum, e) => sum + e.amount);
+    final isSmallScreen = MediaQuery.of(context).size.width < 600;
 
     return Column(
       children: [
-        _buildHeader(theme, isSmallScreen),
+        _buildHeader(theme),
         Expanded(
           child: RefreshIndicator(
             onRefresh: _loadExpensesFromGoogleSheets,
@@ -192,67 +177,33 @@ class _FixedExpensesTabState extends State<FixedExpensesTab> with AutomaticKeepA
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
               itemCount: filteredExpenses.length + (filteredExpenses.isNotEmpty ? 1 : 0),
               itemBuilder: (context, index) {
-                // İlk item toplam kartı
                 if (index == 0 && filteredExpenses.isNotEmpty) {
-                  final activeCount = filteredExpenses.where((e) => e.isActive).length;
                   return Container(
                     margin: const EdgeInsets.only(bottom: 12, top: 8),
                     padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                     decoration: BoxDecoration(
-                      color: theme.colorScheme.primaryContainer.withValues(alpha: 0.3),
+                      color: Colors.red.withValues(alpha: 0.1),
                       borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.red.withValues(alpha: 0.2)),
                     ),
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        Row(
-                          children: [
-                            Icon(
-                              Icons.account_balance_wallet_rounded,
-                              size: 20,
-                              color: theme.colorScheme.primary,
-                            ),
-                            const SizedBox(width: 8),
-                            Text(
-                              _searchController.text.isNotEmpty || _showOnlyActive
-                                  ? 'Filtrelenmiş Toplam'
-                                  : 'Aylık Toplam',
-                              style: theme.textTheme.bodyMedium?.copyWith(
-                                fontWeight: FontWeight.w600,
-                                color: theme.colorScheme.onSurface.withValues(alpha: 0.7),
-                              ),
-                            ),
-                          ],
+                        Text(
+                          'Toplam Sabit Gider:',
+                          style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold),
                         ),
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.end,
-                          children: [
-                            Text(
-                              NumberFormat.currency(
-                                symbol: '₺',
-                                decimalDigits: 2,
-                                locale: 'tr_TR',
-                              ).format(totalAmount),
-                              style: theme.textTheme.titleMedium?.copyWith(
-                                fontWeight: FontWeight.bold,
-                                color: theme.colorScheme.primary,
-                              ),
-                            ),
-                            if (activeCount > 0)
-                              Text(
-                                '$activeCount aktif',
-                                style: theme.textTheme.bodySmall?.copyWith(
-                                  color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
-                                ),
-                              ),
-                          ],
+                        Text(
+                          _formatCurrency(totalExpense),
+                          style: theme.textTheme.titleSmall?.copyWith(
+                            fontWeight: FontWeight.bold,
+                            color: Colors.red,
+                          ),
                         ),
                       ],
                     ),
                   );
                 }
-                
-                // Expense item'ları (index - 1 çünkü ilk item toplam kartı)
                 final expenseIndex = filteredExpenses.isNotEmpty ? index - 1 : index;
                 return RepaintBoundary(
                   child: Padding(
@@ -268,205 +219,10 @@ class _FixedExpensesTabState extends State<FixedExpensesTab> with AutomaticKeepA
     );
   }
 
-  List<FixedExpense> _sortExpenses(List<FixedExpense> expenses) {
-    final sorted = List<FixedExpense>.from(expenses);
-    switch (_sortOption) {
-      case SortOption.amountDesc:
-        sorted.sort((a, b) => b.amount.compareTo(a.amount));
-        break;
-      case SortOption.amountAsc:
-        sorted.sort((a, b) => a.amount.compareTo(b.amount));
-        break;
-      case SortOption.descriptionAsc:
-        sorted.sort((a, b) => a.description.compareTo(b.description));
-        break;
-      case SortOption.descriptionDesc:
-        sorted.sort((a, b) => b.description.compareTo(a.description));
-        break;
-    }
-    return sorted;
-  }
-
-  Widget _buildHeader(ThemeData theme, bool isSmallScreen) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surface,
-        border: Border(
-          bottom: BorderSide(
-            color: theme.dividerColor.withValues(alpha: 0.5),
-            width: 1,
-          ),
-        ),
-      ),
-      child: Row(
-        children: [
-          // Başlık
-          Text(
-            'Sabit Giderler',
-            style: theme.textTheme.titleMedium?.copyWith(
-              fontWeight: FontWeight.w600,
-              color: theme.colorScheme.onSurface.withValues(alpha: 0.8),
-            ),
-          ),
-          const SizedBox(width: 8),
-          // Arama - Flexible ile taşmayı önle
-          Flexible(
-            child: TextField(
-              controller: _searchController,
-              decoration: InputDecoration(
-                hintText: 'Ara...',
-                prefixIcon: Icon(
-                  Icons.search,
-                  size: 20,
-                  color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
-                ),
-                suffixIcon: _searchController.text.isNotEmpty
-                    ? IconButton(
-                        icon: const Icon(Icons.clear, size: 18),
-                        onPressed: () {
-                          setState(() {
-                            _searchController.clear();
-                          });
-                        },
-                      )
-                    : null,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide.none,
-                ),
-                filled: true,
-                fillColor: theme.colorScheme.surfaceContainerHighest,
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 10,
-                ),
-                isDense: true,
-              ),
-              style: theme.textTheme.bodyMedium?.copyWith(fontSize: 14),
-              onChanged: (value) {
-                WidgetsBinding.instance.addPostFrameCallback((_) {
-                  if (mounted) {
-                    setState(() {});
-                  }
-                });
-              },
-            ),
-          ),
-          const SizedBox(width: 8),
-          // Sıralama butonu
-          PopupMenuButton<SortOption>(
-            icon: Icon(
-              Icons.sort_rounded,
-              color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
-            ),
-            tooltip: 'Sırala',
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12),
-            ),
-            onSelected: (value) {
-              setState(() {
-                _sortOption = value;
-              });
-            },
-            itemBuilder: (context) => [
-              PopupMenuItem(
-                value: SortOption.amountDesc,
-                child: Row(
-                  children: [
-                    Icon(
-                      Icons.arrow_downward,
-                      size: 18,
-                      color: _sortOption == SortOption.amountDesc
-                          ? theme.colorScheme.primary
-                          : null,
-                    ),
-                    const SizedBox(width: 8),
-                    const Text('Miktar (Yüksek → Düşük)'),
-                  ],
-                ),
-              ),
-              PopupMenuItem(
-                value: SortOption.amountAsc,
-                child: Row(
-                  children: [
-                    Icon(
-                      Icons.arrow_upward,
-                      size: 18,
-                      color: _sortOption == SortOption.amountAsc
-                          ? theme.colorScheme.primary
-                          : null,
-                    ),
-                    const SizedBox(width: 8),
-                    const Text('Miktar (Düşük → Yüksek)'),
-                  ],
-                ),
-              ),
-              PopupMenuItem(
-                value: SortOption.descriptionAsc,
-                child: Row(
-                  children: [
-                    Icon(
-                      Icons.arrow_upward,
-                      size: 18,
-                      color: _sortOption == SortOption.descriptionAsc
-                          ? theme.colorScheme.primary
-                          : null,
-                    ),
-                    const SizedBox(width: 8),
-                    const Text('Açıklama (A → Z)'),
-                  ],
-                ),
-              ),
-              PopupMenuItem(
-                value: SortOption.descriptionDesc,
-                child: Row(
-                  children: [
-                    Icon(
-                      Icons.arrow_downward,
-                      size: 18,
-                      color: _sortOption == SortOption.descriptionDesc
-                          ? theme.colorScheme.primary
-                          : null,
-                    ),
-                    const SizedBox(width: 8),
-                    const Text('Açıklama (Z → A)'),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(width: 8),
-          // Filtre butonu (sadece aktif göster)
-          IconButton(
-            icon: Icon(
-              _showOnlyActive ? Icons.filter_alt : Icons.filter_alt_outlined,
-              color: _showOnlyActive
-                  ? theme.colorScheme.primary
-                  : theme.colorScheme.onSurface.withValues(alpha: 0.6),
-            ),
-            tooltip: _showOnlyActive ? 'Tümünü göster' : 'Sadece aktifleri göster',
-            onPressed: () {
-              setState(() {
-                _showOnlyActive = !_showOnlyActive;
-              });
-            },
-          ),
-          // Yenile butonu
-          IconButton(
-            icon: const Icon(Icons.refresh_rounded),
-            onPressed: _loadExpensesFromGoogleSheets,
-            tooltip: 'Yenile',
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _buildExpenseCard(FixedExpense expense, ThemeData theme, bool isSmallScreen) {
     return RepaintBoundary(
       child: Container(
-        margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        margin: const EdgeInsets.symmetric(horizontal: 0, vertical: 8),
         child: Material(
           color: const Color(0xFFF8F9FA),
           borderRadius: BorderRadius.circular(20),
@@ -495,15 +251,12 @@ class _FixedExpensesTabState extends State<FixedExpensesTab> with AutomaticKeepA
               child: Padding(
                 padding: const EdgeInsets.all(16),
                 child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    // Üst kısım: İkon, Açıklama, Miktar
                     Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min,
                       children: [
-                        // İkon - EntryCard gibi 48x48 Container
                         Container(
                           width: 48,
                           height: 48,
@@ -514,15 +267,16 @@ class _FixedExpensesTabState extends State<FixedExpensesTab> with AutomaticKeepA
                             borderRadius: BorderRadius.circular(12),
                           ),
                           child: Icon(
-                            expense.isActive ? Icons.receipt_long_rounded : Icons.pause_circle_rounded,
-                            color: expense.isActive
-                                ? theme.colorScheme.primary
-                                : theme.colorScheme.onSurface.withValues(alpha: 0.5),
+                            !expense.isActive
+                                ? Icons.pause_circle_rounded
+                                : Icons.receipt_long_rounded,
+                            color: !expense.isActive
+                                ? theme.colorScheme.onSurface.withValues(alpha: 0.5)
+                                : theme.colorScheme.primary,
                             size: 24,
                           ),
                         ),
                         const SizedBox(width: 12),
-                        // Açıklama ve detaylar - Expanded ile overflow önleniyor
                         Expanded(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
@@ -536,15 +290,14 @@ class _FixedExpensesTabState extends State<FixedExpensesTab> with AutomaticKeepA
                                   letterSpacing: -0.2,
                                   height: 1.3,
                                   decoration: expense.isActive ? null : TextDecoration.lineThrough,
-                                  color: expense.isActive 
-                                      ? null 
+                                  color: expense.isActive
+                                      ? null
                                       : theme.colorScheme.onSurface.withValues(alpha: 0.5),
                                 ),
                                 maxLines: 2,
                                 overflow: TextOverflow.ellipsis,
                               ),
                               const SizedBox(height: 4),
-                              // Kategori ve kişi - EntryCard gibi ikonlu, tek satırda
                               Wrap(
                                 spacing: 12,
                                 runSpacing: 4,
@@ -553,11 +306,7 @@ class _FixedExpensesTabState extends State<FixedExpensesTab> with AutomaticKeepA
                                     Row(
                                       mainAxisSize: MainAxisSize.min,
                                       children: [
-                                        Icon(
-                                          Icons.category_rounded,
-                                          size: 12,
-                                          color: theme.colorScheme.primary,
-                                        ),
+                                        Icon(Icons.category_rounded, size: 12, color: theme.colorScheme.primary),
                                         const SizedBox(width: 4),
                                         Flexible(
                                           child: Text(
@@ -576,11 +325,7 @@ class _FixedExpensesTabState extends State<FixedExpensesTab> with AutomaticKeepA
                                   Row(
                                     mainAxisSize: MainAxisSize.min,
                                     children: [
-                                      Icon(
-                                        Icons.person_outline_rounded,
-                                        size: 12,
-                                        color: theme.colorScheme.onSurface.withValues(alpha: 0.5),
-                                      ),
+                                      Icon(Icons.person_outline_rounded, size: 12, color: theme.colorScheme.onSurface.withValues(alpha: 0.5)),
                                       const SizedBox(width: 4),
                                       Flexible(
                                         child: Text(
@@ -600,11 +345,7 @@ class _FixedExpensesTabState extends State<FixedExpensesTab> with AutomaticKeepA
                                     Row(
                                       mainAxisSize: MainAxisSize.min,
                                       children: [
-                                        Icon(
-                                          Icons.repeat_rounded,
-                                          size: 12,
-                                          color: theme.colorScheme.onSurface.withValues(alpha: 0.5),
-                                        ),
+                                        Icon(Icons.repeat_rounded, size: 12, color: theme.colorScheme.onSurface.withValues(alpha: 0.5)),
                                         const SizedBox(width: 4),
                                         Flexible(
                                           child: Text(
@@ -628,14 +369,10 @@ class _FixedExpensesTabState extends State<FixedExpensesTab> with AutomaticKeepA
                       ],
                     ),
                     const SizedBox(height: 12),
-                    // Miktar badge - tam genişlik, ortalanmış
                     SizedBox(
                       width: double.infinity,
                       child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 10,
-                        ),
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                         decoration: BoxDecoration(
                           color: expense.isActive
                               ? theme.colorScheme.primaryContainer
@@ -673,21 +410,185 @@ class _FixedExpensesTabState extends State<FixedExpensesTab> with AutomaticKeepA
     );
   }
 
-  String _getRecurrenceText(String recurrence) {
-    switch (recurrence.toLowerCase()) {
-      case 'monthly':
-        return 'Aylık';
-      case 'yearly':
-        return 'Yıllık';
-      case 'one-time':
-        return 'Tek Seferlik';
-      default:
-        return recurrence;
+  List<FixedExpense> _sortExpenses(List<FixedExpense> expenses) {
+    final sorted = List<FixedExpense>.from(expenses);
+    switch (_sortOption) {
+      case SortOption.amountDesc:
+        sorted.sort((a, b) => b.amount.compareTo(a.amount));
+        break;
+      case SortOption.amountAsc:
+        sorted.sort((a, b) => a.amount.compareTo(b.amount));
+        break;
+      case SortOption.descriptionAsc:
+        sorted.sort((a, b) => a.description.compareTo(b.description));
+        break;
+      case SortOption.descriptionDesc:
+        sorted.sort((a, b) => b.description.compareTo(a.description));
+        break;
     }
+    return sorted;
   }
 
-  /// Sabit gider detaylarını gösterir (sadece görüntüleme)
+  Widget _buildHeader(ThemeData theme) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surface,
+        border: Border(
+          bottom: BorderSide(
+            color: theme.dividerColor.withOpacity(0.5),
+            width: 1,
+          ),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            'Sabit Giderler',
+            style: theme.textTheme.titleLarge?.copyWith(
+              fontWeight: FontWeight.w700,
+              color: theme.colorScheme.onSurface,
+              letterSpacing: -0.3,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Flexible(
+                child: TextField(
+                  controller: _searchController,
+                  decoration: InputDecoration(
+                    hintText: 'Ara...',
+                    prefixIcon: Icon(
+                      Icons.search,
+                      size: 20,
+                      color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
+                    ),
+                    suffixIcon: _searchController.text.isNotEmpty
+                        ? IconButton(
+                            icon: const Icon(Icons.clear, size: 18),
+                            onPressed: () {
+                              setState(() {
+                                _searchController.clear();
+                              });
+                            },
+                          )
+                        : null,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide.none,
+                    ),
+                    filled: true,
+                    fillColor: theme.colorScheme.surfaceContainerHighest,
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 10,
+                    ),
+                    isDense: true,
+                  ),
+                  style: theme.textTheme.bodyMedium?.copyWith(fontSize: 14),
+                  onChanged: (value) {
+                    WidgetsBinding.instance.addPostFrameCallback((_) {
+                      if (mounted) {
+                        setState(() {});
+                      }
+                    });
+                  },
+                ),
+              ),
+              const SizedBox(width: 8),
+              PopupMenuButton<SortOption>(
+                icon: Icon(
+                  Icons.sort_rounded,
+                  color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
+                ),
+                tooltip: 'Sırala',
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                onSelected: (value) {
+                  setState(() {
+                    _sortOption = value;
+                  });
+                },
+                itemBuilder: (context) => [
+                  PopupMenuItem(
+                    value: SortOption.amountDesc,
+                    child: Row(
+                      children: [
+                        Icon(Icons.arrow_downward, size: 18,
+                          color: _sortOption == SortOption.amountDesc ? theme.colorScheme.primary : null),
+                        const SizedBox(width: 8),
+                        const Text('Miktar (Yüksek → Düşük)'),
+                      ],
+                    ),
+                  ),
+                  PopupMenuItem(
+                    value: SortOption.amountAsc,
+                    child: Row(
+                      children: [
+                        Icon(Icons.arrow_upward, size: 18,
+                          color: _sortOption == SortOption.amountAsc ? theme.colorScheme.primary : null),
+                        const SizedBox(width: 8),
+                        const Text('Miktar (Düşük → Yüksek)'),
+                      ],
+                    ),
+                  ),
+                  PopupMenuItem(
+                    value: SortOption.descriptionAsc,
+                    child: Row(
+                      children: [
+                        Icon(Icons.arrow_upward, size: 18,
+                          color: _sortOption == SortOption.descriptionAsc ? theme.colorScheme.primary : null),
+                        const SizedBox(width: 8),
+                        const Text('Açıklama (A → Z)'),
+                      ],
+                    ),
+                  ),
+                  PopupMenuItem(
+                    value: SortOption.descriptionDesc,
+                    child: Row(
+                      children: [
+                        Icon(Icons.arrow_downward, size: 18,
+                          color: _sortOption == SortOption.descriptionDesc ? theme.colorScheme.primary : null),
+                        const SizedBox(width: 8),
+                        const Text('Açıklama (Z → A)'),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(width: 8),
+              IconButton(
+                icon: Icon(
+                  _showOnlyActive ? Icons.filter_alt : Icons.filter_alt_outlined,
+                  color: _showOnlyActive
+                      ? theme.colorScheme.primary
+                      : theme.colorScheme.onSurface.withValues(alpha: 0.6),
+                ),
+                tooltip: _showOnlyActive ? 'Tümünü göster' : 'Sadece aktifleri göster',
+                onPressed: () {
+                  setState(() {
+                    _showOnlyActive = !_showOnlyActive;
+                  });
+                },
+              ),
+              IconButton(
+                icon: const Icon(Icons.refresh_rounded),
+                onPressed: _loadExpensesFromGoogleSheets,
+                tooltip: 'Yenile',
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
   void _showExpenseDetails(FixedExpense expense, ThemeData theme) {
+    final dateFormat = DateFormat('dd.MM.yyyy');
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
@@ -701,7 +602,6 @@ class _FixedExpensesTabState extends State<FixedExpensesTab> with AutomaticKeepA
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Handle bar
             Center(
               child: Container(
                 margin: const EdgeInsets.only(bottom: 16),
@@ -713,7 +613,6 @@ class _FixedExpensesTabState extends State<FixedExpensesTab> with AutomaticKeepA
                 ),
               ),
             ),
-            // Başlık ve durum
             Row(
               children: [
                 Expanded(
@@ -739,13 +638,14 @@ class _FixedExpensesTabState extends State<FixedExpensesTab> with AutomaticKeepA
               ],
             ),
             const SizedBox(height: 24),
-            // Tutar
-            _buildDetailRow(theme, Icons.currency_lira_rounded, 'Tutar', 
-              NumberFormat.currency(symbol: '₺', decimalDigits: 2, locale: 'tr_TR').format(expense.amount),
-              isPrimary: true),
+            _buildDetailRow(theme, Icons.calendar_today_rounded, 'Ekleme Tarihi',
+              expense.createdAt != null ? dateFormat.format(expense.createdAt!) : '-'),
+            _buildDetailRow(theme, Icons.currency_lira_rounded, 'Aylık Tutar', 
+              _formatCurrency(expense.amount), isPrimary: true),
+            _buildDetailRow(theme, Icons.date_range_rounded, 'Yıllık Tutar', 
+              _formatCurrency(expense.yearlyAmount ?? expense.amount * 12)),
             if (expense.category != null)
               _buildDetailRow(theme, Icons.category_rounded, 'Kategori', expense.category!),
-            _buildDetailRow(theme, Icons.person_rounded, 'Kaynak', expense.ownerName),
             if (expense.recurrence != null)
               _buildDetailRow(theme, Icons.repeat_rounded, 'Tekrarlama', _getRecurrenceText(expense.recurrence!)),
             if (expense.notes != null && expense.notes!.isNotEmpty) ...[
@@ -776,5 +676,22 @@ class _FixedExpensesTabState extends State<FixedExpensesTab> with AutomaticKeepA
         ],
       ),
     );
+  }
+
+  String _getRecurrenceText(String recurrence) {
+    switch (recurrence.toLowerCase()) {
+      case 'monthly':
+        return 'Aylık';
+      case 'yearly':
+        return 'Yıllık';
+      case 'one-time':
+        return 'Tek Seferlik';
+      default:
+        return recurrence;
+    }
+  }
+
+  String _formatCurrency(double amount) {
+    return NumberFormat.currency(locale: 'tr_TR', symbol: '₺', decimalDigits: 2).format(amount);
   }
 }

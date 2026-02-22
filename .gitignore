@@ -85,6 +85,7 @@ yarn-error.log*
 !README.md
 !app/README.md
 !backend/README.md
+!BILINMESI_GEREKENLER.md
 
 # Setup scripts
 *.sh

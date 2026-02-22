@@ -1,13 +1,12 @@
-/**
- * Google Drive dosya indirme servisi
- * 3 katmanlı garantili indirme mekanizması
- */
+/// Google Drive dosya indirme servisi
+/// 3 katmanlı garantili indirme mekanizması
+library;
 
-import 'dart:io';
 import 'dart:typed_data';
 import 'dart:async';
 import 'package:http/http.dart' as http;
-import 'package:path_provider/path_provider.dart';
+import 'package:cross_file/cross_file.dart';
+import 'drive_helper_io.dart' if (dart.library.html) 'drive_helper_web.dart' as platform_impl;
 import '../../models/app_file_reference.dart';
 import '../../utils/app_logger.dart';
 import '../upload_service.dart';
@@ -16,7 +15,7 @@ import 'drive_url_builder.dart';
 /// İndirme sonucu
 class FileDownloadResult {
   final bool success;
-  final File? localFile;
+  final XFile? localFile;
   final String? webViewerUrl;
   final String? errorMessage;
 
@@ -27,7 +26,7 @@ class FileDownloadResult {
     this.errorMessage,
   });
 
-  factory FileDownloadResult.success(File file) {
+  factory FileDownloadResult.success(XFile file) {
     return FileDownloadResult(success: true, localFile: file);
   }
 
@@ -103,7 +102,7 @@ class DriveFileDownloadService {
         AppLogger.info('   → Deneme $attempt/3 başlatılıyor...');
         
         final fileBytes = await UploadService.downloadFileFromDrive(fileRef.driveFileId).timeout(
-          Duration(seconds: 20), // 20 saniye timeout (daha hızlı)
+          const Duration(seconds: 20), // 20 saniye timeout (daha hızlı)
           onTimeout: () {
             AppLogger.warning('   ❌ Backend indirme zaman aşımı (deneme $attempt/3, 20 saniye)');
             throw TimeoutException('Backend indirme zaman aşımı (deneme $attempt)');
@@ -264,23 +263,14 @@ class DriveFileDownloadService {
   }
 
   /// Dosyayı geçici dizine kaydet
-  static Future<File?> _saveFile(Uint8List bytes, AppFileReference fileRef) async {
-    try {
-      final tempDir = await getTemporaryDirectory();
-      final sanitizedName = _sanitizeFileName(fileRef.name);
-      final fileName = sanitizedName.isNotEmpty 
-          ? sanitizedName 
-          : 'file_${fileRef.driveFileId}.${fileRef.fileExtension}';
-      
-      final file = File('${tempDir.path}/$fileName');
-      await file.writeAsBytes(bytes);
-      
-      AppLogger.debug('Dosya kaydedildi: ${file.path}');
-      return file;
-    } catch (e) {
-      AppLogger.error('Dosya kaydetme hatası', e);
-      return null;
-    }
+  /// Dosyayı platforma uygun şekilde kaydet
+  static Future<XFile?> _saveFile(Uint8List bytes, AppFileReference fileRef) async {
+    final sanitizedName = _sanitizeFileName(fileRef.name);
+    final fileName = sanitizedName.isNotEmpty 
+        ? sanitizedName 
+        : 'file_${fileRef.driveFileId}.${fileRef.fileExtension}';
+    
+    return platform_impl.saveFileToTemp(bytes, fileName);
   }
 
   /// Dosya adını temizle (geçersiz karakterleri kaldır)

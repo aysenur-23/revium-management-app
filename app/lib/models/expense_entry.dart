@@ -1,7 +1,6 @@
-/**
- * Harcama kaydı modeli
- * Firestore entries koleksiyonunda saklanan harcama kayıtlarını temsil eder
- */
+/// Harcama kaydı modeli
+/// Firestore entries koleksiyonunda saklanan harcama kayıtlarını temsil eder
+library;
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 
@@ -18,7 +17,10 @@ class ExpenseEntry {
   final String? mimeType; // Gerçek MIME type (application/pdf, image/jpeg, vb.)
   final String? fileName; // Gerçek dosya adı (dosya.pdf, resim.jpg, vb.)
   final String? fixedExpenseId; // Bağlı sabit gider ID'si (opsiyonel)
+  final String entryType; // "expense", "income", veya "tax_deductible" (varsayılan: "expense")
+  final String status; // "active" veya "deleted"
   final DateTime? createdAt;
+  final DateTime? deletedAt;
 
   ExpenseEntry({
     this.id,
@@ -27,13 +29,16 @@ class ExpenseEntry {
     required this.description,
     this.notes,
     required this.amount,
-    required this.fileUrl,
-    required this.fileType,
-    required this.driveFileId,
+    this.fileUrl = '', // Income için boş olabilir
+    this.fileType = 'none', // Income için 'none' olabilir
+    this.driveFileId = '', // Income için boş olabilir
     this.mimeType,
     this.fileName,
     this.fixedExpenseId,
+    this.entryType = 'expense', // Varsayılan olarak harcama
+    this.status = 'active',
     this.createdAt,
+    this.deletedAt,
   });
 
   /// Firestore'dan gelen Map'i ExpenseEntry'ye dönüştürür
@@ -71,7 +76,7 @@ class ExpenseEntry {
       ownerId: json['ownerId'] as String? ?? '',
       ownerName: json['ownerName'] as String? ?? '',
       description: json['description'] as String? ?? '',
-            notes: json['notes'] as String? ?? null,
+            notes: json['notes'] as String?,
       amount: (json['amount'] as num?)?.toDouble() ?? 0.0,
       fileUrl: json['fileUrl'] as String? ?? '',
       fileType: json['fileType'] as String? ?? 'image',
@@ -79,7 +84,10 @@ class ExpenseEntry {
       mimeType: json['mimeType'] as String?,
       fileName: json['fileName'] as String?,
       fixedExpenseId: json['fixedExpenseId'] as String?,
+      entryType: json['entryType'] as String? ?? 'expense', // Varsayılan: expense
+      status: json['status'] as String? ?? 'active',
       createdAt: parseCreatedAt(json['createdAt']),
+      deletedAt: parseCreatedAt(json['deletedAt']),
     );
   }
 
@@ -93,8 +101,12 @@ class ExpenseEntry {
       'fileUrl': fileUrl,
       'fileType': fileType,
       'driveFileId': driveFileId,
+      'status': status,
       // createdAt Firestore'da serverTimestamp olarak ayarlanacak
     };
+    if (deletedAt != null) {
+      map['deletedAt'] = deletedAt!;
+    }
     if (notes != null && notes!.isNotEmpty) {
       map['notes'] = notes!;
     }
@@ -107,7 +119,32 @@ class ExpenseEntry {
     if (fixedExpenseId != null && fixedExpenseId!.isNotEmpty) {
       map['fixedExpenseId'] = fixedExpenseId!;
     }
+    if (entryType != 'expense') {
+      map['entryType'] = entryType; // income veya tax_deductible ise ekle (geriye dönük uyumluluk için)
+    }
     return map;
+  }
+
+  /// Map representation (UploadService veya başka yerler için)
+  Map<String, dynamic> toMap() {
+    return {
+      'id': id,
+      'ownerId': ownerId,
+      'ownerName': ownerName,
+      'description': description,
+      'notes': notes,
+      'amount': amount,
+      'fileUrl': fileUrl,
+      'fileType': fileType,
+      'driveFileId': driveFileId,
+      'mimeType': mimeType,
+      'fileName': fileName,
+      'fixedExpenseId': fixedExpenseId,
+      'entryType': entryType,
+      'status': status,
+      'createdAt': createdAt?.toIso8601String(),
+      'deletedAt': deletedAt?.toIso8601String(),
+    };
   }
 
   /// ExpenseEntry'nin kopyasını oluşturur (id ile)
@@ -124,7 +161,10 @@ class ExpenseEntry {
     String? mimeType,
     String? fileName,
     String? fixedExpenseId,
+    String? entryType,
+    String? status,
     DateTime? createdAt,
+    DateTime? deletedAt,
   }) {
     return ExpenseEntry(
       id: id ?? this.id,
@@ -139,7 +179,10 @@ class ExpenseEntry {
       mimeType: mimeType ?? this.mimeType,
       fileName: fileName ?? this.fileName,
       fixedExpenseId: fixedExpenseId ?? this.fixedExpenseId,
+      entryType: entryType ?? this.entryType,
+      status: status ?? this.status,
       createdAt: createdAt ?? this.createdAt,
+      deletedAt: deletedAt ?? this.deletedAt,
     );
   }
 }

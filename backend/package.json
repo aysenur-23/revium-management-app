@@ -5,9 +5,7 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "dev": "node index.js",
-    "keep-alive": "node keep-alive-supabase.js",
-    "keep-alive:once": "node keep-alive-supabase.js once"
+    "dev": "node index.js"
   },
   "keywords": ["express", "google-drive", "upload"],
   "author": "",

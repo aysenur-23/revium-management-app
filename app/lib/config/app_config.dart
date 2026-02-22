@@ -1,20 +1,31 @@
 /// Uygulama yapılandırma dosyası
 /// Production ve development için farklı ayarlar
+library;
 
 class AppConfig {
   // Backend Configuration
   // Firebase Cloud Functions URL formatı: https://[region]-[project-id].cloudfunctions.net/api
   // NOT: Production'da bu değer Firebase project ID'den otomatik oluşturulmalı
   // Örnek: https://us-central1-expense-tracker-12345.cloudfunctions.net/api
-  static const String productionBackendUrl = 'https://us-central1-management-app0.cloudfunctions.net/api'; // Firebase Functions URL
+  // 🔥 BURAYA DİKKAT: Firebase deploy işleminden sonra size verilen URL'i aşağıya yapıştırın:
+  static const String productionBackendUrl = 'https://us-central1-manage-d9a18.cloudfunctions.net/api'; 
   
   // Google Sheets Configuration
-  static const String googleSheetsFixedExpensesId = '1Ta2VG93hhih4kRxj_qAUJ5_NrNWCWxKLdRYZNvag-O4';
+  static const String googleSheetsFixedExpensesId = '1ZjeJIJ3h0MaHEbmDIM5N-mRKI2YxKuOM';
+  /// Ortak gelirleri tablosu (ortak-gelirler) - gelir kayıtları bu Excel'e yazılır
+  static const String googleSheetsOrtakGelirlerId = '1KqFnCDW03ZTXnK1WcYW1_v39GE24ugLp-GiC21ijut8';
+  /// Vergiden düşülecekler tablosu - vergiden düşülecek kayıtlar bu Excel'e yazılır; eklenen dosyalar VergiBelgeleri klasörüne yüklenir
+  static const String googleSheetsVergidenDusuleceklerId = '1Q5WBm1SNt-Qu_VIWDazvfX4_jjzTOOjl_B2s8sFZnt8';
 
-  // Network Configuration
-  static const int uploadTimeoutSeconds = 30;
-  static const int responseTimeoutSeconds = 10;
-  static const int healthCheckTimeoutSeconds = 5;
+  /// Google Sign-In Web Client ID (Drive OAuth - Web'de "Google Drive Bağla" için).
+  /// Cloud Console > Kimlik Bilgileri > OAuth 2.0 İstemci Kimlikleri > "Web istemcisi 2" > Müşteri Kimliği (tam değer).
+  /// Örnek format: 968047362592-xxxxxxxxxx.apps.googleusercontent.com
+  static const String googleSignInWebClientId = '7040117025-homqf7u32j2i2o1nprai73uvtptl00ae.apps.googleusercontent.com';
+
+  // Network Configuration (mobil ağda kesinti olmaması için yeterli süre)
+  static const int uploadTimeoutSeconds = 90;
+  static const int responseTimeoutSeconds = 45;
+  static const int healthCheckTimeoutSeconds = 10;
   static const int maxRetries = 2;
   static const Duration retryDelay = Duration(seconds: 2);
 

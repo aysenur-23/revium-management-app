@@ -1,7 +1,6 @@
-/**
- * Sabit gider modeli
- * Firestore fixed_expenses koleksiyonunda saklanan sabit gider kayıtlarını temsil eder
- */
+/// Sabit gider modeli
+/// Firestore fixed_expenses koleksiyonunda saklanan sabit gider kayıtlarını temsil eder
+library;
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 
@@ -16,6 +15,8 @@ class FixedExpense {
   final DateTime? startDate; // Başlangıç tarihi
   final String? recurrence; // Tekrarlama: "monthly", "yearly", "one-time" (opsiyonel)
   final bool isActive; // Aktif/Pasif durumu
+  final bool isIncome; // true = sabit gelir, false = sabit gider
+  final double? yearlyAmount; // Yıllık tutar (Google Sheets'ten)
   final DateTime? createdAt;
 
   FixedExpense({
@@ -29,6 +30,8 @@ class FixedExpense {
     this.startDate,
     this.recurrence,
     this.isActive = true,
+    this.isIncome = false,
+    this.yearlyAmount,
     this.createdAt,
   });
 
@@ -67,12 +70,14 @@ class FixedExpense {
       ownerId: json['ownerId'] as String? ?? '',
       ownerName: json['ownerName'] as String? ?? '',
       description: json['description'] as String? ?? '',
-      notes: json['notes'] as String? ?? null,
+      notes: json['notes'] as String?,
       amount: (json['amount'] as num?)?.toDouble() ?? 0.0,
-      category: json['category'] as String? ?? null,
+      category: json['category'] as String?,
       startDate: parseDate(json['startDate']),
-      recurrence: json['recurrence'] as String? ?? null,
+      recurrence: json['recurrence'] as String?,
       isActive: json['isActive'] as bool? ?? true,
+      isIncome: json['isIncome'] as bool? ?? false,
+      yearlyAmount: (json['yearlyAmount'] as num?)?.toDouble(),
       createdAt: parseDate(json['createdAt']),
     );
   }
@@ -85,6 +90,7 @@ class FixedExpense {
       'description': description,
       'amount': amount,
       'isActive': isActive,
+      'isIncome': isIncome,
       // createdAt Firestore'da serverTimestamp olarak ayarlanacak
     };
     if (notes != null && notes!.isNotEmpty) {
@@ -102,6 +108,7 @@ class FixedExpense {
     return map;
   }
 
+
   /// FixedExpense'nin kopyasını oluşturur
   FixedExpense copyWith({
     String? id,
@@ -114,6 +121,8 @@ class FixedExpense {
     DateTime? startDate,
     String? recurrence,
     bool? isActive,
+    bool? isIncome,
+    double? yearlyAmount,
     DateTime? createdAt,
   }) {
     return FixedExpense(
@@ -127,6 +136,8 @@ class FixedExpense {
       startDate: startDate ?? this.startDate,
       recurrence: recurrence ?? this.recurrence,
       isActive: isActive ?? this.isActive,
+      isIncome: isIncome ?? this.isIncome,
+      yearlyAmount: yearlyAmount ?? this.yearlyAmount,
       createdAt: createdAt ?? this.createdAt,
     );
   }

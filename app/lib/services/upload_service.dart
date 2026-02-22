@@ -1,22 +1,30 @@
-/**
- * Dosya yükleme servisi
- * Backend'e dosya yükler ve Google Drive URL'lerini alır
- */
+/// Dosya yükleme servisi
+/// Backend'e dosya yükler ve Google Drive URL'lerini alır
+library;
 
-import 'dart:io';
-import 'dart:typed_data';
+import 'package:cross_file/cross_file.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../config/app_config.dart';
 import '../utils/app_logger.dart';
+import 'drive_token_service.dart';
 
 /// Backend URL anahtarı (SharedPreferences)
 const String _backendUrlKey = 'backend_base_url';
 
 /// Backend URL'i - Platform bazlı otomatik ayarlanır veya kaydedilmiş değer kullanılır
 Future<String> getBackendBaseUrl() async {
+  // Production Backend URL - Firebase Cloud Functions (veya localhost development için)
+  const String productionBackendUrl = AppConfig.productionBackendUrl;
+  
+  // Eğer production URL ayarlanmışsa onu kullan (en yüksek öncelik - development dahil)
+  if (productionBackendUrl.isNotEmpty) {
+    return productionBackendUrl;
+  }
+
+  // Kullanıcının ayarladığı URL varsa onu kullan (ikinci öncelik)
   try {
     final prefs = await SharedPreferences.getInstance();
     final savedUrl = prefs.getString(_backendUrlKey);
@@ -27,39 +35,14 @@ Future<String> getBackendBaseUrl() async {
   } catch (e) {
     // Hata durumunda varsayılan değere dön
   }
-
-  // Production Backend URL - Supabase Edge Functions
-  // Supabase project: nemwuunbowzuuyvhmehi
-  const String productionBackendUrl = AppConfig.productionBackendUrl;
-  
-  // Eğer Railway deploy edilmediyse, boş bırakın ve kullanıcı Settings'ten ayarlayabilir
-  
-  // Eğer production URL ayarlanmışsa onu kullan (en yüksek öncelik)
-  if (productionBackendUrl.isNotEmpty) {
-    return productionBackendUrl;
-  }
-  
-  // Kullanıcının ayarladığı URL varsa onu kullan (ikinci öncelik)
-  try {
-    final prefs = await SharedPreferences.getInstance();
-    final savedUrl = prefs.getString(_backendUrlKey);
-    if (savedUrl != null && savedUrl.isNotEmpty) {
-      return savedUrl;
-    }
-  } catch (e) {
-    // Hata durumunda varsayılan değere dön
-  }
   
   // Varsayılan platform bazlı URL'ler (son çare)
   if (kIsWeb) {
     return 'http://localhost:4000';
-  } else if (Platform.isAndroid) {
-    // Android için varsayılan: Production backend URL'i eklenmemişse
-    // kullanıcı Settings'ten ayarlayabilir, ama varsayılan olarak
-    // emülatör URL'i kullanılır (gerçek cihazda çalışmaz)
+  } else if (defaultTargetPlatform == TargetPlatform.android || defaultTargetPlatform == TargetPlatform.iOS) {
+    // Mobil cihazlar için localhost (10.0.2.2 emülatörler için genelde kullanılır)
+    // Ancak productionBackendUrl ayarlı olduğu sürece buraya girmeyecektir.
     return 'http://10.0.2.2:4000';
-  } else if (Platform.isIOS) {
-    return 'http://localhost:4000';
   } else {
     return 'http://localhost:4000';
   }
@@ -90,9 +73,21 @@ class UploadResult {
 }
 
 class UploadService {
+  /// Multipart encoding sorunlarını azaltmak için dosya adındaki Türkçe karakterleri ASCII'ye çevirir.
+  static String _sanitizeFileNameForUpload(String name) {
+    if (name.isEmpty) return 'file';
+    return name
+        .replaceAll('ı', 'i').replaceAll('İ', 'I')
+        .replaceAll('ğ', 'g').replaceAll('Ğ', 'G')
+        .replaceAll('ü', 'u').replaceAll('Ü', 'U')
+        .replaceAll('ş', 's').replaceAll('Ş', 'S')
+        .replaceAll('ö', 'o').replaceAll('Ö', 'O')
+        .replaceAll('ç', 'c').replaceAll('Ç', 'C');
+  }
+
   /// Dosyayı backend'e yükler ve UploadResult döndürür
   static Future<UploadResult> uploadFile({
-    File? file,
+    XFile? file,
     Uint8List? fileBytes,
     String? fileName,
     required String ownerId,
@@ -100,66 +95,79 @@ class UploadService {
     required double amount,
     required String description,
     String? notes,
+    String entryType = 'expense', // 'expense' veya 'income'
   }) async {
     try {
-      if (!kIsWeb && file == null) {
-        AppLogger.error('❌ Mobil platformda dosya (File) gerekli ama null');
-        throw Exception('Mobil platformda dosya (File) gerekli.');
+      final useBytes = fileBytes != null && fileName != null && fileBytes.isNotEmpty;
+      final useFile = file != null;
+      if (kIsWeb) {
+        if (!useBytes) {
+          AppLogger.error('❌ Web platformunda dosya baytları ve dosya adı gerekli.');
+          throw Exception('Web platformunda dosya baytları ve dosya adı gerekli.');
+        }
+      } else {
+        if (!useBytes && !useFile) {
+          AppLogger.error('❌ Mobil: Dosya için fileBytes+fileName veya XFile gerekli.');
+          throw Exception('Dosya gerekli: fileBytes+fileName veya XFile verin.');
+        }
       }
-      if (kIsWeb && (fileBytes == null || fileName == null)) {
-        AppLogger.error('❌ Web platformunda dosya baytları veya dosya adı eksik');
-        throw Exception('Web platformunda dosya baytları ve dosya adı gerekli.');
+
+      final int fileLength;
+      final String nameForLog;
+      if (useBytes) {
+        fileLength = fileBytes!.length; // ignore: unnecessary_non_null_assertion
+        nameForLog = fileName ?? ''; // ignore: dead_null_aware_expression
+      } else {
+        final f = file!;
+        fileLength = await f.length();
+        nameForLog = f.name;
       }
-      
+
       AppLogger.info('📤 Dosya yükleme başlatılıyor...');
       AppLogger.info('   → Platform: ${kIsWeb ? "Web" : "Mobil"}');
-      AppLogger.info('   → Dosya adı: $fileName');
-      AppLogger.info('   → Dosya boyutu: ${kIsWeb ? fileBytes!.length : await file!.length()} bytes');
+      AppLogger.info('   → Dosya adı: $nameForLog');
+      AppLogger.info('   → Dosya boyutu: $fileLength bytes');
       AppLogger.info('   → Owner: $ownerName ($ownerId)');
       AppLogger.info('   → Amount: $amount');
       AppLogger.info('   → Description: $description');
 
       final baseUrl = await getBackendBaseUrl();
-      // Supabase Edge Function için: baseUrl zaten /functions/v1/upload şeklinde
-      // Direkt baseUrl'i kullan, tekrar /upload ekleme
-      final uri = Uri.parse(baseUrl);
+      // Firebase Cloud Functions için: baseUrl'e /upload ekle
+      final uploadUrl = baseUrl.endsWith('/') ? '${baseUrl}upload' : '$baseUrl/upload';
+      final uri = Uri.parse(uploadUrl);
       final request = http.MultipartRequest('POST', uri);
-      
-      // Supabase Edge Function için authorization header ekle
-      if (baseUrl.contains('supabase.co')) {
-        // Supabase Edge Functions için gerekli header'lar
-        request.headers['apikey'] = AppConfig.supabaseAnonKey;
-        request.headers['Authorization'] = 'Bearer ${AppConfig.supabaseAnonKey}';
-      }
 
-      if (kIsWeb) {
+      // Multipart encoding sorunlarını azaltmak için dosya adını ASCII'ye çevir (Türkçe karakterler)
+      final safeFileName = _sanitizeFileNameForUpload(fileName ?? nameForLog);
+
+      if (useBytes) {
         request.files.add(http.MultipartFile.fromBytes(
           'file',
-          fileBytes!,
-          filename: fileName,
+          fileBytes!, // ignore: unnecessary_non_null_assertion
+          filename: safeFileName,
         ));
       } else {
-        final fileStream = file!.openRead();
-        final fileLength = await file.length();
-        final multipartFile = http.MultipartFile(
+        final f = file!;
+        request.files.add(http.MultipartFile(
           'file',
-          fileStream,
+          f.openRead(),
           fileLength,
-          filename: file.path.split('/').last,
-        );
-        request.files.add(multipartFile);
+          filename: safeFileName,
+        ));
       }
 
-      // ownerId, ownerName, amount, description ve notes'u ekle (dosya isimlendirme ve Sheets için)
+      // ownerId, ownerName, amount, description, notes ve entryType'ı ekle (dosya isimlendirme ve Sheets için)
       request.fields['ownerId'] = ownerId;
       request.fields['ownerName'] = ownerName;
       request.fields['amount'] = amount.toString();
       request.fields['description'] = description;
+      request.fields['entryType'] = entryType;
       if (notes != null && notes.isNotEmpty) {
         request.fields['notes'] = notes;
       }
 
       // İsteği gönder (timeout ile, retry mekanizması ile)
+      // Her retry'da yeni request oluşturulmalı (bir request sadece bir kez finalize edilebilir)
       http.StreamedResponse? streamedResponse;
       http.Response? response;
       
@@ -168,23 +176,86 @@ class UploadService {
           if (attempt > 0) {
             AppLogger.warning('Upload retry attempt $attempt/${AppConfig.maxRetries}');
             await Future.delayed(AppConfig.retryDelay);
+            
+            // Her retry'da yeni request oluştur
+            final retryRequest = http.MultipartRequest('POST', uri);
+            
+            if (useBytes) {
+              retryRequest.files.add(http.MultipartFile.fromBytes(
+                'file',
+                fileBytes!, // ignore: unnecessary_non_null_assertion
+                filename: safeFileName,
+              ));
+            } else {
+              final f = file!;
+              retryRequest.files.add(http.MultipartFile(
+                'file',
+                f.openRead(),
+                fileLength,
+                filename: safeFileName,
+              ));
+            }
+            
+            // Form alanlarını tekrar ekle
+            retryRequest.fields['ownerId'] = ownerId;
+            retryRequest.fields['ownerName'] = ownerName;
+            retryRequest.fields['amount'] = amount.toString();
+            retryRequest.fields['description'] = description;
+            retryRequest.fields['entryType'] = entryType;
+            if (notes != null && notes.isNotEmpty) {
+              retryRequest.fields['notes'] = notes;
+            }
+            
+            streamedResponse = await retryRequest.send().timeout(
+              const Duration(seconds: AppConfig.uploadTimeoutSeconds),
+              onTimeout: () {
+                throw Exception('Dosya yükleme zaman aşımı. İnternet bağlantınızı kontrol edin.');
+              },
+            );
+          } else {
+            // İlk deneme - orijinal request'i kullan
+            streamedResponse = await request.send().timeout(
+              const Duration(seconds: AppConfig.uploadTimeoutSeconds),
+              onTimeout: () {
+                throw Exception('Dosya yükleme zaman aşımı. İnternet bağlantınızı kontrol edin.');
+              },
+            );
           }
           
-          streamedResponse = await request.send().timeout(
-            Duration(seconds: AppConfig.uploadTimeoutSeconds),
-            onTimeout: () {
-              throw Exception('Dosya yükleme zaman aşımı. İnternet bağlantınızı kontrol edin.');
-            },
-          );
-          
           response = await http.Response.fromStream(streamedResponse).timeout(
-            Duration(seconds: AppConfig.responseTimeoutSeconds),
+            const Duration(seconds: AppConfig.responseTimeoutSeconds),
             onTimeout: () {
               throw Exception('Yanıt alma zaman aşımı. Lütfen tekrar deneyin.');
             },
           );
-          
-          // Başarılı ise retry döngüsünden çık
+
+          if (response.statusCode == 200) {
+            final body = response.body;
+            if (body.isEmpty) {
+              if (attempt < AppConfig.maxRetries) {
+                AppLogger.warning('Boş yanıt alındı, yeniden denenecek ($attempt/${AppConfig.maxRetries})');
+                await Future.delayed(AppConfig.retryDelay);
+                continue;
+              }
+              AppLogger.error('Backend yanıtı boş', null);
+              throw Exception('Sunucu yanıtı boş. Bağlantı koptu olabilir, tekrar deneyin.');
+            }
+            try {
+              final jsonResponse = json.decode(body) as Map<String, dynamic>;
+              return UploadResult.fromJson(jsonResponse);
+            } on FormatException catch (e, stackTrace) {
+              if (attempt < AppConfig.maxRetries) {
+                AppLogger.warning('Yanıt eksik/bozuk, yeniden denenecek ($attempt/${AppConfig.maxRetries})');
+                await Future.delayed(AppConfig.retryDelay);
+                continue;
+              }
+              AppLogger.error('Backend yanıtı parse hatası (eksik/bozuk yanıt)', e, stackTrace);
+              throw Exception('Sunucu yanıtı eksik veya bozuk. İnternet bağlantınızı kontrol edip tekrar deneyin.');
+            } catch (e, stackTrace) {
+              AppLogger.error('Backend yanıtı geçersiz', e, stackTrace);
+              throw Exception('Backend yanıtı geçersiz: ${e.toString()}');
+            }
+          }
           break;
         } catch (e) {
           if (attempt == AppConfig.maxRetries) {
@@ -193,20 +264,12 @@ class UploadService {
           AppLogger.warning('Upload attempt $attempt failed: $e');
         }
       }
-      
+
       if (response == null) {
         throw Exception('Upload başarısız: Yanıt alınamadı');
       }
 
-      if (response.statusCode == 200) {
-        try {
-          final jsonResponse = json.decode(response.body) as Map<String, dynamic>;
-          return UploadResult.fromJson(jsonResponse);
-        } catch (e, stackTrace) {
-          AppLogger.error('Backend yanıtı geçersiz', e, stackTrace);
-          throw Exception('Backend yanıtı geçersiz: ${e.toString()}');
-        }
-      } else {
+      if (response.statusCode != 200) {
         final errorBody = response.body;
         String errorMessage = 'Upload başarısız: ${response.statusCode}';
         try {
@@ -227,7 +290,7 @@ class UploadService {
             }
           }
         } catch (e) {
-          // JSON parse edilemezse body'yi kullan
+          // JSON parse edilemezse (örn. HTML 500) body'yi kullan
           AppLogger.error('Error body parse hatası', e);
           if (errorBody.length < 500) {
             errorMessage += ' - $errorBody';
@@ -236,25 +299,31 @@ class UploadService {
           }
         }
         AppLogger.error('Backend error response: Status=${response.statusCode}, Body=$errorBody');
-        
-        // Kullanıcı dostu hata mesajları
-        if (response.statusCode == 401 || response.statusCode == 403) {
-          errorMessage = 'Google Drive erişim hatası. Lütfen yetkilendirmeyi kontrol edin.';
-        } else if (response.statusCode == 404) {
-          errorMessage = 'Backend servisi bulunamadı. Lütfen bağlantınızı kontrol edin.';
-        } else if (response.statusCode == 500 || response.statusCode == 502 || response.statusCode == 503) {
-          errorMessage = 'Sunucu hatası. Lütfen daha sonra tekrar deneyin.';
-        } else if (response.statusCode == 408 || response.statusCode == 504) {
-          errorMessage = 'İstek zaman aşımına uğradı. Lütfen tekrar deneyin.';
+
+        // Backend JSON'dan anlamlı mesaj alındıysa onu kullan; yoksa genel mesajlar
+        final parsedMessage = errorMessage != 'Upload başarısız: ${response.statusCode}' &&
+            !errorMessage.startsWith('Upload başarısız: ${response.statusCode} - ');
+        if (!parsedMessage) {
+          if (response.statusCode == 401 || response.statusCode == 403) {
+            errorMessage = 'Google Drive erişim hatası. Lütfen yetkilendirmeyi kontrol edin.';
+          } else if (response.statusCode == 404) {
+            errorMessage = 'Backend servisi bulunamadı. Lütfen bağlantınızı kontrol edin.';
+          } else if (response.statusCode == 500 || response.statusCode == 502 || response.statusCode == 503) {
+            errorMessage = 'Sunucu hatası. Lütfen daha sonra tekrar deneyin.';
+          } else if (response.statusCode == 408 || response.statusCode == 504) {
+            errorMessage = 'İstek zaman aşımına uğradı. Lütfen tekrar deneyin.';
+          }
         }
         
         throw Exception(errorMessage);
       }
+      throw StateError('Beklenmeyen yanıt durumu');
     } catch (e, stackTrace) {
       AppLogger.error('Dosya yükleme hatası', e, stackTrace);
-      // Zaten Exception ise direkt fırlat
-      if (e is Exception) {
-        rethrow;
+      if (e is Exception) rethrow;
+      final msg = e.toString().toLowerCase();
+      if (msg.contains('unexpected end') || msg.contains('end of stream') || msg.contains('connection closed')) {
+        throw Exception('Bağlantı beklenmedik şekilde kesildi. İnternet bağlantınızı kontrol edip tekrar deneyin.');
       }
       throw Exception('Dosya yükleme hatası: ${e.toString()}');
     }
@@ -265,26 +334,17 @@ class UploadService {
     try {
       final baseUrl = await getBackendBaseUrl();
       // Health check için baseUrl'e /health ekle
-      // Supabase Edge Function'da pathname.endsWith('/health') kontrolü var
-      final healthUrl = baseUrl.endsWith('/upload') 
-          ? baseUrl.replaceAll('/upload', '/health')
-          : '$baseUrl/health';
+      final healthUrl = baseUrl.endsWith('/') ? '${baseUrl}health' : '$baseUrl/health';
       final uri = Uri.parse(healthUrl);
       
       final request = http.Request('GET', uri);
       
-      // Supabase Edge Function için authorization header ekle
-      if (baseUrl.contains('supabase.co')) {
-        request.headers['apikey'] = AppConfig.supabaseAnonKey;
-        request.headers['Authorization'] = 'Bearer ${AppConfig.supabaseAnonKey}';
-      }
-      
       final response = await request.send().timeout(
-        Duration(seconds: AppConfig.healthCheckTimeoutSeconds),
+        const Duration(seconds: AppConfig.healthCheckTimeoutSeconds),
       );
       
       final responseBody = await http.Response.fromStream(response).timeout(
-        Duration(seconds: AppConfig.healthCheckTimeoutSeconds),
+        const Duration(seconds: AppConfig.healthCheckTimeoutSeconds),
       );
 
       return responseBody.statusCode == 200;
@@ -318,24 +378,22 @@ class UploadService {
   /// Backend artık direkt dosya içeriği yerine download linki döndürüyor
   static Future<Uint8List> downloadFileFromDrive(String fileId) async {
     try {
-      // Her zaman production URL kullan (SharedPreferences'taki yanlış değerleri atla)
-      final baseUrl = AppConfig.productionBackendUrl;
+      // Backend URL'ini al
+      final baseUrl = await getBackendBaseUrl();
       
-      // URL'i doğrudan oluştur
+      // URL'i doğrudan oluştur (Firebase Functions formatı: baseUrl?fileId=...)
       final uri = Uri.parse('$baseUrl?fileId=$fileId');
       
       AppLogger.info('🔹 Backend download URL: $uri');
       AppLogger.info('🔹 File ID: $fileId');
       
       final request = http.Request('GET', uri);
-      request.headers['apikey'] = AppConfig.supabaseAnonKey;
-      request.headers['Authorization'] = 'Bearer ${AppConfig.supabaseAnonKey}';
       
       AppLogger.info('🔹 Backend isteği gönderiliyor...');
       final stopwatch = Stopwatch()..start();
       
       final response = await request.send().timeout(
-        Duration(seconds: AppConfig.uploadTimeoutSeconds),
+        const Duration(seconds: AppConfig.uploadTimeoutSeconds),
         onTimeout: () {
           throw Exception('Backend zaman aşımı');
         },
@@ -356,7 +414,7 @@ class UploadService {
           AppLogger.info('✅ Download link: $downloadLink');
           
           final fileResponse = await http.get(Uri.parse(downloadLink)).timeout(
-            Duration(seconds: AppConfig.uploadTimeoutSeconds * 2),
+            const Duration(seconds: AppConfig.uploadTimeoutSeconds * 2),
           );
           
           if (fileResponse.statusCode == 200 && fileResponse.bodyBytes.isNotEmpty) {
@@ -382,119 +440,25 @@ class UploadService {
     }
   }
 
-  /// Google Drive'dan dosyayı siler
-  static Future<void> deleteFile(String fileId) async {
-    try {
-      final baseUrl = await getBackendBaseUrl();
-      // Delete endpoint için baseUrl'e /delete ekle
-      final deleteUrl = baseUrl.endsWith('/upload') 
-          ? baseUrl.replaceAll('/upload', '/delete')
-          : '$baseUrl/delete';
-      final uri = Uri.parse(deleteUrl);
-      
-      AppLogger.info('Dosya siliniyor: $fileId');
-      
-      final request = http.Request('POST', uri);
-      request.headers['Content-Type'] = 'application/json';
-      
-      // Supabase Edge Function için authorization header ekle
-      if (baseUrl.contains('supabase.co')) {
-        request.headers['apikey'] = AppConfig.supabaseAnonKey;
-        request.headers['Authorization'] = 'Bearer ${AppConfig.supabaseAnonKey}';
-      }
-      
-      // Request body
-      request.body = jsonEncode({
-        'fileId': fileId,
-      });
-      
-      final response = await request.send().timeout(
-        Duration(seconds: AppConfig.uploadTimeoutSeconds),
-      );
-      
-      final responseBody = await http.Response.fromStream(response).timeout(
-        Duration(seconds: AppConfig.uploadTimeoutSeconds),
-      );
-
-      if (responseBody.statusCode == 200 || responseBody.statusCode == 201) {
-        AppLogger.info('Dosya başarıyla silindi: $fileId');
-        return;
-      } else {
-        String errorMessage = 'Dosya silinemedi';
-        final errorBody = responseBody.body;
-        
-        try {
-          final errorJson = jsonDecode(errorBody) as Map<String, dynamic>?;
-          if (errorJson != null) {
-            if (errorJson['message'] != null) {
-              errorMessage = errorJson['message'] as String;
-            } else if (errorJson['error'] != null) {
-              errorMessage = errorJson['error'] as String;
-            }
-          }
-        } catch (e) {
-          AppLogger.error('Error body parse hatası', e);
-          if (errorBody.length < 500) {
-            errorMessage += ' - $errorBody';
-          } else {
-            errorMessage += ' - ${errorBody.substring(0, 500)}...';
-          }
-        }
-        AppLogger.error('Backend delete error response: Status=${responseBody.statusCode}, Body=$errorBody');
-        
-        // Kullanıcı dostu hata mesajları
-        if (responseBody.statusCode == 401 || responseBody.statusCode == 403) {
-          errorMessage = 'Google Drive erişim hatası. Dosya silinemedi.';
-        } else if (responseBody.statusCode == 404) {
-          errorMessage = 'Dosya bulunamadı. Zaten silinmiş olabilir.';
-        } else if (responseBody.statusCode == 500 || responseBody.statusCode == 502 || responseBody.statusCode == 503) {
-          errorMessage = 'Sunucu hatası. Lütfen daha sonra tekrar deneyin.';
-        }
-        
-        throw Exception(errorMessage);
-      }
-    } catch (e) {
-      if (e is Exception) {
-        rethrow;
-      }
-      throw Exception('Dosya silme hatası: ${e.toString()}');
-    }
-  }
-
   /// Google Sheets linkini alır
   static Future<String?> getGoogleSheetsUrl() async {
     try {
       final baseUrl = await getBackendBaseUrl();
-      // Supabase Edge Function için: baseUrl zaten /upload ile bitiyor, /sheets'e çevir
-      String sheetsUrl;
-      if (baseUrl.contains('supabase.co')) {
-        if (baseUrl.endsWith('/upload')) {
-          sheetsUrl = baseUrl.substring(0, baseUrl.length - 6) + 'sheets';
-        } else {
-          sheetsUrl = baseUrl.replaceAll('/upload', '/sheets');
-        }
-      } else {
-        sheetsUrl = baseUrl.endsWith('/') ? '${baseUrl}sheets' : '$baseUrl/sheets';
-      }
+      // Firebase Cloud Functions için: baseUrl'e /sheets ekle
+      final sheetsUrl = baseUrl.endsWith('/') ? '${baseUrl}sheets' : '$baseUrl/sheets';
       final uri = Uri.parse(sheetsUrl);
 
       final request = http.Request('GET', uri);
 
-      // Supabase Edge Function için authorization header ekle
-      if (baseUrl.contains('supabase.co')) {
-        request.headers['apikey'] = AppConfig.supabaseAnonKey;
-        request.headers['Authorization'] = 'Bearer ${AppConfig.supabaseAnonKey}';
-      }
-
       final response = await request.send().timeout(
-        Duration(seconds: AppConfig.uploadTimeoutSeconds),
+        const Duration(seconds: AppConfig.uploadTimeoutSeconds),
         onTimeout: () {
           throw Exception('Backend zaman aşımı. İnternet bağlantınızı kontrol edin.');
         },
       );
 
       final responseBody = await http.Response.fromStream(response).timeout(
-        Duration(seconds: AppConfig.uploadTimeoutSeconds),
+        const Duration(seconds: AppConfig.uploadTimeoutSeconds),
       );
 
       if (response.statusCode == 200) {
@@ -534,7 +498,7 @@ class UploadService {
   static Future<Map<String, dynamic>?> initializeGoogleSheetsWithEntries(
     List<Map<String, dynamic>> entries,
   ) async {
-    return _createExcelFile(entries: entries, fileName: 'Tum Eklenenler.csv');
+    return createExcelFile(entries: entries, fileName: 'Tum Eklenenler.csv');
   }
 
   /// Excel'i kullanıcının kendi entry'leriyle oluşturur
@@ -546,61 +510,129 @@ class UploadService {
     final fileName = ownerName != null && ownerName.isNotEmpty
         ? '$ownerName Eklediklerim.csv'
         : 'Eklediklerim.csv';
-    return _createExcelFile(entries: entries, fileName: fileName);
+    return createExcelFile(entries: entries, fileName: fileName);
   }
 
-  /// Excel oluşturma yardımcı fonksiyonu
-  static Future<Map<String, dynamic>?> _createExcelFile({
+  /// Excel'i ortak gelirleriyle oluşturur (sabit tablo)
+  static Future<Map<String, dynamic>?> createIncomeEntriesExcel(
+    List<Map<String, dynamic>> entries,
+  ) async {
+    return createExcelFile(entries: entries, fileName: 'Ortak Gelirleri.csv');
+  }
+
+  /// Excel'i vergiden düşülecek kayıtlarla oluşturur (sabit tablo)
+  static Future<Map<String, dynamic>?> createTaxDeductibleEntriesExcel(
+    List<Map<String, dynamic>> entries,
+  ) async {
+    return createExcelFile(entries: entries, fileName: 'Vergiden Düşülecekler.csv');
+  }
+
+  /// Excel'i tüm entry'lerle oluşturur
+  static Future<Map<String, dynamic>?> createAllEntriesExcel(
+    List<Map<String, dynamic>> entries,
+  ) async {
+    return createExcelFile(entries: entries, fileName: 'Tum Eklenenler.csv');
+  }
+
+  /// Excel'i sadece harcama (gider) kayıtlarıyla oluşturur
+  static Future<Map<String, dynamic>?> createExpenseEntriesExcel(
+    List<Map<String, dynamic>> entries,
+  ) async {
+    return createExcelFile(entries: entries, fileName: 'Harcamalar.csv');
+  }
+
+  /// Excel oluşturma yardımcı fonksiyonu — aktif kayıtları gönderir.
+  static Future<Map<String, dynamic>?> createExcelFile({
     required List<Map<String, dynamic>> entries,
     required String fileName,
   }) async {
     try {
-      // Her zaman production URL kullan
-      final baseUrl = AppConfig.productionBackendUrl;
+      // Backend URL'ini al
+      final baseUrl = await getBackendBaseUrl();
       final uri = Uri.parse('$baseUrl?endpoint=init-sheets');
+
+      // Log ekle
+      AppLogger.info('📊 Excel isteği: $fileName, Aktif: ${entries.length}');
 
       final request = http.Request('POST', uri);
       request.headers['Content-Type'] = 'application/json';
-      request.headers['apikey'] = AppConfig.supabaseAnonKey;
-      request.headers['Authorization'] = 'Bearer ${AppConfig.supabaseAnonKey}';
 
-      // Entry'leri formatla
-      final formattedEntries = entries.map((entry) {
-        return {
-          'dateTime': entry['createdAt']?.toString() ?? DateTime.now().toIso8601String(),
-          'notes': entry['notes'] ?? '',
-          'ownerName': entry['ownerName'] ?? '',
-          'amount': entry['amount']?.toDouble() ?? 0.0,
-          'description': entry['description'] ?? '',
-          'fileUrl': entry['fileUrl'] ?? '',
-        };
-      }).toList();
+      // Entry'leri formatla yardımcı fonksiyon
+      List<Map<String, dynamic>> format(List<Map<String, dynamic>> list) {
+        return list.map((entry) {
+          return {
+            'dateTime': entry['createdAt']?.toString() ?? DateTime.now().toIso8601String(),
+            'notes': entry['notes'] ?? '',
+            'ownerName': entry['ownerName'] ?? '',
+            'amount': entry['amount']?.toDouble() ?? 0.0,
+            'description': entry['description'] ?? '',
+            'fileUrl': entry['fileUrl'] ?? '',
+            'entryType': entry['entryType'] ?? 'expense',
+            'category': entry['category'] ?? '',
+          };
+        }).toList();
+      }
 
-      // sheetName: sabit dosya adı (aynı isimde dosya varsa güncellenir)
+      final formattedEntries = format(entries);
+
+      // sheetName: sabit dosya adı
       final sheetName = fileName.replaceAll('.csv', '').replaceAll(RegExp(r'_\d{4}-\d{2}-\d{2}'), '');
-      request.body = jsonEncode({
+      final body = <String, dynamic>{
         'entries': formattedEntries,
         'sheetName': sheetName,
-      });
+      };
+      final driveToken = await DriveTokenService.getDriveAccessToken();
+      if (driveToken != null) body['driveAccessToken'] = driveToken;
+      request.body = jsonEncode(body);
 
       AppLogger.info('Excel oluşturma isteği: $uri');
 
       final response = await request.send().timeout(
-        Duration(seconds: AppConfig.uploadTimeoutSeconds * 2),
+        const Duration(seconds: AppConfig.uploadTimeoutSeconds * 2),
         onTimeout: () {
           throw Exception('Backend zaman aşımı');
         },
       );
 
       final responseBody = await http.Response.fromStream(response);
+      final bodyStr = responseBody.body;
 
       if (response.statusCode == 200) {
-        final json = jsonDecode(responseBody.body) as Map<String, dynamic>;
-        AppLogger.info('Excel oluşturuldu: ${json['url']}');
-        return json;
+        if (bodyStr.isEmpty) {
+          throw Exception('Sunucu yanıtı boş. Bağlantıyı kontrol edip tekrar deneyin.');
+        }
+        try {
+          final json = jsonDecode(bodyStr) as Map<String, dynamic>;
+          final count = json['rowCount'] ?? 0;
+          AppLogger.info('Excel oluşturuldu: ${json['url']} - $count kayıt yazıldı');
+          return json;
+        } on FormatException catch (e) {
+          AppLogger.error('Excel yanıtı parse hatası', e);
+          throw Exception('Sunucu yanıtı eksik veya bozuk. İnternet bağlantınızı kontrol edip tekrar deneyin.');
+        }
       } else {
-        AppLogger.error('Excel hata: ${response.statusCode} - ${responseBody.body}');
-        throw Exception('Excel oluşturulamadı: ${response.statusCode}');
+        AppLogger.error('Excel hata: ${response.statusCode} - $bodyStr');
+        String errorMessage = 'Excel oluşturulamadı: ${response.statusCode}';
+        if (bodyStr.isNotEmpty) {
+          try {
+            final errorJson = jsonDecode(bodyStr) as Map<String, dynamic>;
+            if (errorJson['message'] != null) {
+              errorMessage = errorJson['message'] as String;
+            } else if (errorJson['error'] != null) {
+              errorMessage = errorJson['error'] as String;
+            }
+            // 403: Erişim yok - requiredEmail varsa mesaja ekle
+            if (response.statusCode == 403 && errorJson['requiredEmail'] != null) {
+              final email = errorJson['requiredEmail'] as String;
+              if (email.isNotEmpty && !errorMessage.contains(email)) {
+                errorMessage = 'Tabloya erişim yok. Google Sheet\'te Paylaş → "$email" adresini düzenleyici ekleyin.';
+              }
+            }
+          } catch (_) {
+            // JSON parse edilemezse varsayılan mesaj kalır
+          }
+        }
+        throw Exception(errorMessage);
       }
     } catch (e) {
       AppLogger.error('Excel oluşturma hatası', e);
@@ -609,31 +641,36 @@ class UploadService {
   }
 
   /// Excel'i tüm entry'ler ve sabit giderlerle oluşturur (Ayarlar sayfası için)
-  static Future<Map<String, dynamic>?> initializeGoogleSheetsWithAllData(
-    List<Map<String, dynamic>> entries,
-    List<Map<String, dynamic>> fixedExpenses,
-  ) async {
+  static Future<Map<String, dynamic>?> initializeGoogleSheetsWithAllData({
+    required List<Map<String, dynamic>> entries,
+    required List<Map<String, dynamic>> fixedExpenses,
+    String sheetName = 'Tum Veriler',
+  }) async {
     try {
-      // Her zaman production URL kullan
-      final baseUrl = AppConfig.productionBackendUrl;
+      // Backend URL'ini al
+      final baseUrl = await getBackendBaseUrl();
       final uri = Uri.parse('$baseUrl?endpoint=init-sheets');
 
       final request = http.Request('POST', uri);
       request.headers['Content-Type'] = 'application/json';
-      request.headers['apikey'] = AppConfig.supabaseAnonKey;
-      request.headers['Authorization'] = 'Bearer ${AppConfig.supabaseAnonKey}';
 
-      // Entry'leri formatla
-      final formattedEntries = entries.map((entry) {
-        return {
-          'dateTime': entry['createdAt']?.toString() ?? DateTime.now().toIso8601String(),
-          'notes': entry['notes'] ?? '',
-          'ownerName': entry['ownerName'] ?? '',
-          'amount': entry['amount']?.toDouble() ?? 0.0,
-          'description': entry['description'] ?? '',
-          'fileUrl': entry['fileUrl'] ?? '',
-        };
-      }).toList();
+      // Entry'leri formatla yardımcı fonksiyon
+      List<Map<String, dynamic>> formatEntries(List<Map<String, dynamic>> list) {
+        return list.map((entry) {
+          return {
+            'dateTime': entry['createdAt']?.toString() ?? DateTime.now().toIso8601String(),
+            'notes': entry['notes'] ?? '',
+            'ownerName': entry['ownerName'] ?? '',
+            'amount': entry['amount']?.toDouble() ?? 0.0,
+            'description': entry['description'] ?? '',
+            'fileUrl': entry['fileUrl'] ?? '',
+            'entryType': entry['entryType'] ?? 'expense',
+            'category': entry['category'] ?? '',
+          };
+        }).toList();
+      }
+
+      final formattedEntries = formatEntries(entries);
 
       // Sabit giderleri formatla
       final formattedFixedExpenses = fixedExpenses.map((expense) {
@@ -649,29 +686,41 @@ class UploadService {
         };
       }).toList();
 
-      request.body = jsonEncode({
+      final body = <String, dynamic>{
         'entries': formattedEntries,
         'fixedExpenses': formattedFixedExpenses,
-        'sheetName': 'Tum Veriler', // Ayarlar sayfasi icin
-      });
+        'sheetName': sheetName,
+      };
+      final driveToken = await DriveTokenService.getDriveAccessToken();
+      if (driveToken != null) body['driveAccessToken'] = driveToken;
+      request.body = jsonEncode(body);
 
       AppLogger.info('Excel (All Data) oluşturma isteği: $uri');
 
       final response = await request.send().timeout(
-        Duration(seconds: AppConfig.uploadTimeoutSeconds * 2),
+        const Duration(seconds: AppConfig.uploadTimeoutSeconds * 2),
         onTimeout: () {
           throw Exception('Backend zaman aşımı');
         },
       );
 
       final responseBody = await http.Response.fromStream(response);
+      final bodyStr = responseBody.body;
 
       if (response.statusCode == 200) {
-        final json = jsonDecode(responseBody.body) as Map<String, dynamic>;
-        AppLogger.info('Excel (All Data) oluşturuldu: ${json['url']}');
-        return json;
+        if (bodyStr.isEmpty) {
+          throw Exception('Sunucu yanıtı boş. Bağlantıyı kontrol edip tekrar deneyin.');
+        }
+        try {
+          final json = jsonDecode(bodyStr) as Map<String, dynamic>;
+          AppLogger.info('Excel (All Data) oluşturuldu: ${json['url']}');
+          return json;
+        } on FormatException catch (e) {
+          AppLogger.error('Excel (All Data) yanıt parse hatası', e);
+          throw Exception('Sunucu yanıtı eksik veya bozuk. İnternet bağlantınızı kontrol edip tekrar deneyin.');
+        }
       } else {
-        AppLogger.error('Excel hata: ${response.statusCode} - ${responseBody.body}');
+        AppLogger.error('Excel hata: ${response.statusCode} - $bodyStr');
         throw Exception('Excel oluşturulamadı: ${response.statusCode}');
       }
     } catch (e) {
@@ -685,14 +734,12 @@ class UploadService {
     List<Map<String, dynamic>> fixedExpenses,
   ) async {
     try {
-      // Her zaman production URL kullan
-      final baseUrl = AppConfig.productionBackendUrl;
+      // Backend URL'ini al
+      final baseUrl = await getBackendBaseUrl();
       final uri = Uri.parse('$baseUrl?endpoint=init-sheets');
 
       final request = http.Request('POST', uri);
       request.headers['Content-Type'] = 'application/json';
-      request.headers['apikey'] = AppConfig.supabaseAnonKey;
-      request.headers['Authorization'] = 'Bearer ${AppConfig.supabaseAnonKey}';
 
       // Sabit giderleri formatla
       final formattedFixedExpenses = fixedExpenses.map((expense) {
@@ -708,33 +755,75 @@ class UploadService {
         };
       }).toList();
 
-      request.body = jsonEncode({
+      final body = <String, dynamic>{
         'fixedExpenses': formattedFixedExpenses,
-        'sheetName': 'Sabit Giderler', // Sayfa adı
-      });
+        'sheetName': 'Sabit Giderler',
+      };
+      final driveToken = await DriveTokenService.getDriveAccessToken();
+      if (driveToken != null) body['driveAccessToken'] = driveToken;
+      request.body = jsonEncode(body);
 
       AppLogger.info('Excel (Fixed Expenses) oluşturma isteği: $uri');
 
       final response = await request.send().timeout(
-        Duration(seconds: AppConfig.uploadTimeoutSeconds * 2),
+        const Duration(seconds: AppConfig.uploadTimeoutSeconds * 2),
         onTimeout: () {
           throw Exception('Backend zaman aşımı');
         },
       );
 
       final responseBody = await http.Response.fromStream(response);
+      final bodyStr = responseBody.body;
 
       if (response.statusCode == 200) {
-        final json = jsonDecode(responseBody.body) as Map<String, dynamic>;
-        AppLogger.info('Excel (Fixed Expenses) oluşturuldu: ${json['url']}');
-        return json;
+        if (bodyStr.isEmpty) {
+          throw Exception('Sunucu yanıtı boş. Bağlantıyı kontrol edip tekrar deneyin.');
+        }
+        try {
+          final json = jsonDecode(bodyStr) as Map<String, dynamic>;
+          AppLogger.info('Excel (Fixed Expenses) oluşturuldu: ${json['url']}');
+          return json;
+        } on FormatException catch (e) {
+          AppLogger.error('Excel (Fixed Expenses) yanıt parse hatası', e);
+          throw Exception('Sunucu yanıtı eksik veya bozuk. İnternet bağlantınızı kontrol edip tekrar deneyin.');
+        }
       } else {
-        AppLogger.error('Excel hata: ${response.statusCode} - ${responseBody.body}');
+        AppLogger.error('Excel hata: ${response.statusCode} - $bodyStr');
         throw Exception('Excel oluşturulamadı: ${response.statusCode}');
       }
     } catch (e) {
       AppLogger.error('Excel oluşturma hatası', e);
       rethrow;
+    }
+  }
+
+  /// Tüm Google Sheets dosyalarını arka planda önceden hazırlar (performans için)
+  static Future<void> prewarmSheets(String ownerName) async {
+    try {
+      final baseUrl = await getBackendBaseUrl();
+      // Eğer base URL boş ise (örn. hata varsa) çık
+      if (baseUrl.isEmpty) return;
+      
+      final uri = Uri.parse('$baseUrl?endpoint=prewarm-sheets');
+      
+      AppLogger.info('🚀 Sheets ön hazırlık (Prewarm) başlatılıyor... Kişi: $ownerName');
+      
+      // Fire-and-forget yapmamız gerekebilir ama backend yanıtı hızlı olacağı için bekleyebiliriz
+      // ya da timeout'u kısa tutabiliriz.
+      final response = await http.post(
+        uri,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'ownerName': ownerName}),
+      ).timeout(const Duration(seconds: 10)); // 10 saniye bekle, olmazsa arka planda devam etsin
+
+      if (response.statusCode == 200) {
+        AppLogger.success('✅ Sheets ön hazırlık tamamlandı');
+      } else {
+        AppLogger.warning('⚠️ Sheets ön hazırlık uyarısı: ${response.statusCode}');
+      }
+    } catch (e) {
+      // Prewarm hatası kullanıcıyı bloklamamalı, sadece logla
+      AppLogger.info('ℹ️ Sheets ön hazırlık sessiz hata (önemsiz): $e');
     }
   }
 }

@@ -1,7 +1,6 @@
-/**
- * Lokal depolama servisi
- * SharedPreferences kullanarak kullanıcı bilgilerini saklar
- */
+/// Lokal depolama servisi
+/// SharedPreferences kullanarak kullanıcı bilgilerini saklar
+library;
 
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/user_profile.dart';

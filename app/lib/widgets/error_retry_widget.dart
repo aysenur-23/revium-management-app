@@ -1,5 +1,6 @@
 /// Hata ve retry widget'ı
 /// Hata durumlarında retry butonu gösterir
+library;
 
 import 'package:flutter/material.dart';
 

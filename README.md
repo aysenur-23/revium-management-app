@@ -1,6 +1,6 @@
 # Harcama Takip Uygulaması
 
-Flutter mobil uygulama + Supabase Edge Functions backend ile Google Drive entegrasyonu.
+Flutter mobil uygulama + Firebase Cloud Functions backend ile Google Drive entegrasyonu.
 
 ## 📱 APK
 
@@ -10,54 +10,69 @@ Flutter mobil uygulama + Supabase Edge Functions backend ile Google Drive entegr
 
 ## 🚀 Hızlı Başlangıç
 
-### Backend (Supabase Edge Functions)
+### Backend (Firebase Cloud Functions)
 
-1. **Supabase secrets ekle (Dashboard'dan):**
-   - Supabase Dashboard'a gidin: https://supabase.com/dashboard
-   - Projenizi seçin (nemwuunbowzuuyvhmehi)
-   - Project Settings > Edge Functions > Secrets bölümüne gidin
-   - Şu secrets'ları ekleyin:
-     - `GOOGLE_CLIENT_ID`: (Google Cloud Console'dan alınacak)
-     - `GOOGLE_CLIENT_SECRET`: (Google Cloud Console'dan alınacak)
-     - `GOOGLE_REFRESH_TOKEN`: (OAuth flow ile alınacak - aşağıya bakın)
-     - `GOOGLE_DRIVE_FOLDER_ID`: `1yAvPlU5LqcDX5HJk55usmkFd1OrNrhe1` (Maliyet belgeleri klasörü)
-       - **ÖNEMLİ:** Tüm yüklenen dosyalar (PDF, JPEG, PNG vb.) bu klasöre kaydedilir
-       - Klasör linki: https://drive.google.com/drive/folders/1yAvPlU5LqcDX5HJk55usmkFd1OrNrhe1
-       - **Kurulum:** Name: `GOOGLE_DRIVE_FOLDER_ID`, Value: `1yAvPlU5LqcDX5HJk55usmkFd1OrNrhe1` → Save
-     - `GOOGLE_SHEETS_FOLDER_ID`: `1yO4roZMvMLxHDW4oHnQ592hX6opIRthG` (Excel/Sheets dosyaları klasörü)
-       - **ÖNEMLİ:** Tüm Excel/CSV dosyaları Google Sheets formatında bu klasöre kaydedilir
-       - Klasör linki: https://drive.google.com/drive/folders/1yO4roZMvMLxHDW4oHnQ592hX6opIRthG
-       - **Kurulum:** Name: `GOOGLE_SHEETS_FOLDER_ID`, Value: `1yO4roZMvMLxHDW4oHnQ592hX6opIRthG` → Save
-
-2. **Edge Function'ı Deploy Edin:**
-   
-   **Yöntem 1: Supabase Dashboard (Önerilen)**
-   - Supabase Dashboard > Edge Functions
-   - "Create a new function" veya "Deploy function" butonuna tıklayın
-   - Function adı: `upload`
-   - `backend/supabase/functions/upload/index.ts` dosyasının içeriğini kopyalayıp yapıştırın
-   - Deploy butonuna tıklayın
-   
-   **Yöntem 2: Supabase CLI (Eğer yüklüyse)**
+1. **Firebase CLI Kurulumu:**
    ```bash
-   cd backend
-   supabase functions deploy upload --project-ref nemwuunbowzuuyvhmehi
+   npm install -g firebase-tools
+   firebase login
    ```
 
-3. **Refresh Token almak için:**
+2. **Firebase Functions Environment Variables Ayarları:**
    
-   **ÖNEMLİ:** Function deploy edildikten sonra, authorization header ile `/auth` endpoint'ini çağırın:
+   Firebase Functions v7+ için environment variables kullanıyoruz. Google Service Account bilgilerini ayarlayın:
    
-   PowerShell ile:
-   ```powershell
-   $anonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5lbXd1dW5ib3d6dXV5dmhtZWhpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjUwMTQ3OTUsImV4cCI6MjA4MDU5MDc5NX0.xHM791yFkBMSCi_EdF7OhdOq9iscD0-dT6sHuNr1JYM"
-   $response = Invoke-RestMethod -Uri "https://nemwuunbowzuuyvhmehi.supabase.co/functions/v1/upload/auth" -Method GET -Headers @{"apikey"=$anonKey; "Authorization"="Bearer $anonKey"}
-   $response.authUrl
+   **Secrets (Gizli Bilgiler) - Önerilen:**
+   ```bash
+   # Service Account bilgileri (gizli)
+   echo "your-service-account@project.iam.gserviceaccount.com" | firebase functions:secrets:set GOOGLE_SERVICE_ACCOUNT_EMAIL
+   echo "-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n" | firebase functions:secrets:set GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY
    ```
    
-   Dönen `authUrl` değerini tarayıcıda açın ve Google hesabınızla giriş yapın
-   - Redirect sonrası `/auth/callback` endpoint'i refresh token'ı döndürecek
-   - Bu token'ı Supabase secrets'a ekleyin
+   **Environment Variables (Genel Bilgiler):**
+   ```bash
+   # API Key ve Folder ID'ler (genel)
+   firebase functions:config:set GOOGLE_API_KEY="your-google-api-key"
+   firebase functions:config:set GOOGLE_DRIVE_FOLDER_ID="1yAvPlU5LqcDX5HJk55usmkFd1OrNrhe1"
+   firebase functions:config:set GOOGLE_SHEETS_FOLDER_ID="1yO4roZMvMLxHDW4oHnQ592hX6opIRthG"
+   firebase functions:config:set GOOGLE_SHEETS_FIXED_EXPENSES_ID="1Ta2VG93hhih4kRxj_qAUJ5_NrNWCWxKLdRYZNvag-O4"
+   ```
+   
+   **Alternatif: `.env` Dosyası (Local Development):**
+   
+   `backend/functions/.env` dosyası oluşturun:
+   ```env
+   GOOGLE_SERVICE_ACCOUNT_EMAIL=your-service-account@project.iam.gserviceaccount.com
+   GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
+   GOOGLE_API_KEY=your-google-api-key
+   GOOGLE_DRIVE_FOLDER_ID=1yAvPlU5LqcDX5HJk55usmkFd1OrNrhe1
+   GOOGLE_SHEETS_FOLDER_ID=1yO4roZMvMLxHDW4oHnQ592hX6opIRthG
+   GOOGLE_SHEETS_FIXED_EXPENSES_ID=1Ta2VG93hhih4kRxj_qAUJ5_NrNWCWxKLdRYZNvag-O4
+   ```
+   
+   **ÖNEMLİ:** 
+   - `service_account_email`: Google Cloud Console > IAM & Admin > Service Accounts'dan alınır
+   - `service_account_private_key`: Service Account key JSON dosyasından alınır (tüm key'i kopyalayın, `\n` karakterlerini koruyun)
+   - `api_key`: Google Cloud Console > APIs & Services > Credentials'dan alınır
+   - `drive_folder_id`: Google Drive klasör ID'si (Maliyet belgeleri klasörü)
+   - `sheets_folder_id`: Google Drive klasör ID'si (Excel/Sheets dosyaları klasörü)
+   - `sheets_fixed_expenses_id`: Google Sheets dosya ID'si (Sabit giderler için)
+
+3. **Functions'ı Deploy Edin:**
+   ```bash
+   cd backend/functions
+   npm install
+   cd ../..
+   firebase deploy --only functions
+   ```
+
+4. **Backend URL'ini Alın:**
+   
+   Deploy sonrası Firebase Console'dan Functions URL'ini alın:
+   - Format: `https://[region]-[project-id].cloudfunctions.net/api`
+   - Örnek: `https://us-central1-expense-tracker-12345.cloudfunctions.net/api`
+   
+   Bu URL'yi `app/lib/config/app_config.dart` dosyasındaki `productionBackendUrl` değişkenine ekleyin.
 
 ### Flutter Uygulaması
 
@@ -79,37 +94,28 @@ flutter run
 
 ## 🔧 Google Cloud Console
 
-**OAuth 2.0 Client ID Ayarları:**
+**Service Account Kurulumu:**
 
-1. **Authorized redirect URIs** bölümüne şu URI'leri ekleyin (path ile birlikte):
-   - `http://localhost:4000/auth/callback`
-   - `https://nemwuunbowzuuyvhmehi.supabase.co/functions/v1/upload/auth/callback`
-
-2. **Authorized JavaScript origins** bölümüne şu origin'i ekleyin (sadece domain, path YOK):
-   - `https://nemwuunbowzuuyvhmehi.supabase.co`
-   
-   ⚠️ **ÖNEMLİ:** JavaScript origins'de sadece domain olmalı, `/functions/v1/upload` gibi path eklemeyin!
+1. **Google Cloud Console'a gidin:** https://console.cloud.google.com
+2. **APIs & Services > Library** > **Google Drive API** > Enable
+3. **IAM & Admin > Service Accounts** > **Create Service Account**
+4. Service Account'a **Editor** rolü verin
+5. Service Account'u seçin > **Keys** > **Add Key** > **Create new key** > **JSON**
+6. İndirilen JSON dosyasından `client_email` ve `private_key` değerlerini alın
+7. Bu değerleri Firebase Functions environment variables'a ekleyin (yukarıdaki adım 2'ye bakın)
 
 ## 📝 Notlar
 
-- Backend URL: Supabase Edge Function URL'i otomatik kullanılır
-- Refresh Token: OAuth flow ile bir kez alınır, Supabase secrets'a eklenir
-- APK: Herhangi bir Android telefona yüklenebilir, backend URL otomatik
-- Siyah Ekran Sorunu: Dialog kapatma ve exception handling iyileştirildi
+- **Backend URL:** Firebase Cloud Functions URL'i `app/lib/config/app_config.dart` dosyasındaki `productionBackendUrl` değişkenine eklenmelidir
+- **APK:** Herhangi bir Android telefona yüklenebilir, backend URL otomatik
+- **Siyah Ekran Sorunu:** Dialog kapatma ve exception handling iyileştirildi
 - **Google Drive Klasörü:** Tüm maliyet belgeleri (PDF, JPEG, PNG vb.) belirtilen klasöre kaydedilir
   - Klasör ID: `1yAvPlU5LqcDX5HJk55usmkFd1OrNrhe1`
   - Klasör linki: https://drive.google.com/drive/folders/1yAvPlU5LqcDX5HJk55usmkFd1OrNrhe1
-  - Bu klasör ID'si Supabase secrets'a `GOOGLE_DRIVE_FOLDER_ID` olarak eklenmelidir
+  - Bu klasör ID'si Firebase Functions config'e `google.drive_folder_id` olarak eklenmelidir
 - **Google Sheets Sabit Giderler:** Sabit giderler Google Sheets'ten dinamik olarak okunur
-  - Sheets ID: `1_M2g7x4DQs8OQuZzrk4qWkLTMFGRrd-1`
-  - Sheets linki: https://docs.google.com/spreadsheets/d/1_M2g7x4DQs8OQuZzrk4qWkLTMFGRrd-1/edit
+  - Sheets ID: `1Ta2VG93hhih4kRxj_qAUJ5_NrNWCWxKLdRYZNvag-O4`
+  - Sheets linki: https://docs.google.com/spreadsheets/d/1Ta2VG93hhih4kRxj_qAUJ5_NrNWCWxKLdRYZNvag-O4/edit
   - Yeni eklenen satırlar otomatik olarak uygulamada görünecektir
   - Sheets formatı: Açıklama, Tutar, Kişi, Kategori, Tekrarlama, Notlar, Aktif/Pasif
-- **Google Sheets Excel Dosyaları:** Tüm Excel/CSV dosyaları artık Google Sheets formatında oluşturulur
-  - Klasör ID: `1yO4roZMvMLxHDW4oHnQ592hX6opIRthG`
-  - Klasör linki: https://drive.google.com/drive/folders/1yO4roZMvMLxHDW4oHnQ592hX6opIRthG
-  - Dosyalar dinamik olarak güncellenir (mevcut dosya varsa güncellenir, yoksa yeni oluşturulur)
-  - Bu klasör ID'si Supabase secrets'a `GOOGLE_SHEETS_FOLDER_ID` olarak eklenmelidir
-- **ÖNEMLİ:** Supabase anon key'i `app/lib/services/upload_service.dart` dosyasında güncellenmelidir
-  - Supabase Dashboard > Settings > API > anon public key'i kopyalayın
-  - `upload_service.dart` dosyasındaki `supabaseAnonKey` değişkenini güncelleyin
+  - Bu Sheets ID'si Firebase Functions config'e `google.sheets_fixed_expenses_id` olarak eklenmelidir

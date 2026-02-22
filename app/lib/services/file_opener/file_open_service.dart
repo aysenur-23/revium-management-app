@@ -1,7 +1,6 @@
-/**
- * Dosya açma servisi
- * Doğrudan Google Drive web viewer ile açar (backend'e bağımlı değil)
- */
+/// Dosya açma servisi
+/// Doğrudan Google Drive web viewer ile açar (backend'e bağımlı değil)
+library;
 
 import 'package:url_launcher/url_launcher.dart';
 import '../../models/app_file_reference.dart';

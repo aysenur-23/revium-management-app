@@ -1,7 +1,6 @@
-/**
- * Kullanıcı profil modeli
- * Firestore users koleksiyonunda saklanan kullanıcı bilgilerini temsil eder
- */
+/// Kullanıcı profil modeli
+/// Firestore users koleksiyonunda saklanan kullanıcı bilgilerini temsil eder
+library;
 
 class UserProfile {
   final String userId;

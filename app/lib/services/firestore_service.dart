@@ -1,7 +1,6 @@
-/**
- * Firestore servisi
- * Firestore veritabanı işlemlerini yönetir
- */
+/// Firestore servisi
+/// Firestore veritabanı işlemlerini yönetir
+library;
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -50,7 +49,7 @@ class FirestoreService {
       
       // Timeout ile get işlemi
       final userDoc = await userRef.get().timeout(
-        Duration(seconds: AppConfig.firestoreTimeoutSeconds),
+        const Duration(seconds: AppConfig.firestoreTimeoutSeconds),
         onTimeout: () {
           throw Exception('Firestore bağlantı zaman aşımı. İnternet bağlantınızı kontrol edin.');
         },
@@ -61,7 +60,7 @@ class FirestoreService {
           'fullName': fullName,
           'createdAt': FieldValue.serverTimestamp(),
         }).timeout(
-          Duration(seconds: AppConfig.firestoreTimeoutSeconds),
+          const Duration(seconds: AppConfig.firestoreTimeoutSeconds),
           onTimeout: () {
             throw Exception('Firestore kayıt zaman aşımı. İnternet bağlantınızı kontrol edin.');
           },
@@ -78,12 +77,36 @@ class FirestoreService {
     }
   }
 
+  /// Kullanıcı FCM token'ını Firestore'da günceller (fuarlar bildirimleri için)
+  static Future<void> updateUserFcmToken(String userId, String? token) async {
+    if (userId.isEmpty) return;
+    try {
+      await _firestore.collection('users').doc(userId).set(
+        {
+          'fcmToken': token,
+          'lastActive': FieldValue.serverTimestamp(),
+        },
+        SetOptions(merge: true),
+      ).timeout(
+        const Duration(seconds: AppConfig.firestoreTimeoutSeconds),
+        onTimeout: () {
+          throw Exception('Firestore güncelleme zaman aşımı.');
+        },
+      );
+      AppLogger.success('FCM token Firestore\'a kaydedildi: $userId');
+    } on FirebaseException catch (e) {
+      AppLogger.warning('Firestore FCM token güncelleme: ${e.code} - ${e.message}');
+    } catch (e) {
+      AppLogger.warning('Firestore FCM token güncelleme: $e');
+    }
+  }
+
   /// Kullanıcı bilgilerini Firestore'dan getirir
   static Future<Map<String, dynamic>?> getUser(String userId) async {
     try {
       final userRef = _firestore.collection('users').doc(userId);
       final userDoc = await userRef.get().timeout(
-        Duration(seconds: AppConfig.firestoreTimeoutSeconds),
+        const Duration(seconds: AppConfig.firestoreTimeoutSeconds),
         onTimeout: () {
           throw Exception('Firestore bağlantı zaman aşımı. İnternet bağlantınızı kontrol edin.');
         },
@@ -118,13 +141,13 @@ class FirestoreService {
         .limit(AppConfig.streamLimit) // İlk 100 kayıt (performans için)
         .snapshots(includeMetadataChanges: false) // Sadece gerçek değişiklikler için
         .handleError((error) {
-      final errorString = error.toString().toLowerCase();
-      // Permission hatası durumunda token'ı yenilemeyi dene (async olmadan)
-      if (errorString.contains('permission') || errorString.contains('permission-denied')) {
-        AppLogger.warning('Firestore permission hatası - token yenileniyor...');
-        _refreshAuthToken(); // Fire and forget
+      final errorString = error.toString();
+      if (errorString.contains('FAILED_PRECONDITION') && 
+          errorString.contains('index')) {
+        AppLogger.error('❌ Firestore [index] hatası! Lütfen şu linke tıklayarak indeksi oluşturun:\n$errorString', error);
+      } else {
+        AppLogger.error('Firestore streamMyEntries hatası', error);
       }
-      AppLogger.error('Firestore streamMyEntries hatası', error);
       // Tüm hataları fırlat - StreamBuilder'ın hasError ile yakalayabilmesi için
       throw error;
     })
@@ -141,7 +164,7 @@ class FirestoreService {
             // Hatalı dokümanı atla
           }
         }
-        return entries;
+        return entries.where((entry) => entry.status != 'deleted').toList();
       } catch (e) {
         AppLogger.error('Firestore streamMyEntries parse hatası', e);
         return <ExpenseEntry>[];
@@ -163,13 +186,13 @@ class FirestoreService {
         .limit(AppConfig.streamLimit) // Performans için limit ekle
         .snapshots(includeMetadataChanges: false) // Sadece gerçek değişiklikler için
         .handleError((error) {
-      final errorString = error.toString().toLowerCase();
-      // Permission hatası durumunda token'ı yenilemeyi dene (async olmadan)
-      if (errorString.contains('permission') || errorString.contains('permission-denied')) {
-        AppLogger.warning('Firestore permission hatası - token yenileniyor...');
-        _refreshAuthToken(); // Fire and forget
+      final errorString = error.toString();
+      if (errorString.contains('FAILED_PRECONDITION') && 
+          errorString.contains('index')) {
+        AppLogger.error('❌ Firestore [index] hatası! Lütfen şu linke tıklayarak indeksi oluşturun:\n$errorString', error);
+      } else {
+        AppLogger.error('Firestore streamAllEntries hatası', error);
       }
-      AppLogger.error('Firestore streamAllEntries hatası', error);
       // Tüm hataları fırlat - StreamBuilder'ın hasError ile yakalayabilmesi için
       throw error;
     })
@@ -177,6 +200,7 @@ class FirestoreService {
       try {
         return snapshot.docs
             .map((doc) => ExpenseEntry.fromJson(doc.data(), doc.id))
+            .where((entry) => entry.status != 'deleted')
             .toList();
       } catch (e) {
         AppLogger.error('Firestore streamAllEntries parse hatası', e);
@@ -195,7 +219,7 @@ class FirestoreService {
           .orderBy('createdAt', descending: true)
           .get()
           .timeout(
-            Duration(seconds: AppConfig.firestoreTimeoutSeconds),
+            const Duration(seconds: AppConfig.firestoreTimeoutSeconds),
             onTimeout: () {
               throw Exception('Firestore sorgu zaman aşımı. İnternet bağlantınızı kontrol edin.');
             },
@@ -203,6 +227,7 @@ class FirestoreService {
       
       return snapshot.docs
           .map((doc) => ExpenseEntry.fromJson(doc.data(), doc.id))
+          .where((e) => e.status == 'active')
           .toList();
     } on FirebaseException catch (e) {
       AppLogger.error('Firestore getMyEntries FirebaseException: ${e.code} - ${e.message}', e);
@@ -222,7 +247,7 @@ class FirestoreService {
           .orderBy('createdAt', descending: true)
           .get()
           .timeout(
-            Duration(seconds: AppConfig.firestoreTimeoutSeconds),
+            const Duration(seconds: AppConfig.firestoreTimeoutSeconds),
             onTimeout: () {
               throw Exception('Firestore sorgu zaman aşımı. İnternet bağlantınızı kontrol edin.');
             },
@@ -230,12 +255,110 @@ class FirestoreService {
       
       return snapshot.docs
           .map((doc) => ExpenseEntry.fromJson(doc.data(), doc.id))
+          .where((e) => e.status == 'active')
           .toList();
     } on FirebaseException catch (e) {
       AppLogger.error('Firestore getAllEntries FirebaseException: ${e.code} - ${e.message}', e);
       throw Exception('Firestore hatası: ${e.code} - ${e.message}');
     } catch (e) {
       AppLogger.error('Firestore getAllEntries genel hata', e);
+      throw Exception('Firestore hatası: ${e.toString()}');
+    }
+  }
+
+  /// Aktif (silinmemiş) kayıtları döndürür
+  static Future<List<ExpenseEntry>> getActiveEntries() async {
+    _ensureAuthenticated();
+    try {
+      // Önce basit server-side sorguyu dene (isNotEqualTo orderBy gerektirir, bu yüzden get-all fallback kullanacağız)
+      try {
+        final snapshot = await _firestore
+            .collection('entries')
+            .get()
+            .timeout(const Duration(seconds: AppConfig.firestoreTimeoutSeconds * 2));
+            
+        final allDocs = snapshot.docs
+            .map((doc) => ExpenseEntry.fromJson(doc.data(), doc.id))
+            .toList();
+            
+        final activeList = allDocs.where((entry) => entry.status != 'deleted').toList();
+        final deletedList = allDocs.where((entry) => entry.status == 'deleted').toList();
+            
+        AppLogger.info('getActiveEntries (Full fetch): Toplam ${allDocs.length}, Aktif: ${activeList.length}, Silinmiş: ${deletedList.length}');
+        
+        // Debug için ID'leri logla (sadece ilk birkaç tanesi)
+        if (deletedList.isNotEmpty) {
+          final ids = deletedList.take(5).map((e) => e.id).join(', ');
+          AppLogger.info('Örnek silinmiş ID\'ler: $ids');
+        }
+
+        return activeList;
+      } catch (e) {
+        AppLogger.error('getActiveEntries hata', e);
+        return [];
+      }
+    } catch (e) {
+      AppLogger.error('Firestore getActiveEntries kritik hata', e);
+      throw Exception('Veriler alınamadı.');
+    }
+  }
+
+  /// Silinmiş (status == 'deleted') kayıtları döndürür
+  static Future<List<ExpenseEntry>> getDeletedEntries() async {
+    _ensureAuthenticated();
+    try {
+      // Sadelik ve kesinlik için getActiveEntries içinde zaten hepsi çekiliyor.
+      // Ama burada tekrar gerekirse diye basit bir where sorgusu yapalım (index gerektirmez)
+      final snapshot = await _firestore
+          .collection('entries')
+          .where('status', isEqualTo: 'deleted')
+          .get()
+          .timeout(const Duration(seconds: AppConfig.firestoreTimeoutSeconds));
+          
+      final list = snapshot.docs
+          .map((doc) => ExpenseEntry.fromJson(doc.data(), doc.id))
+          .toList();
+          
+      AppLogger.info('getDeletedEntries (Where-only): ${list.length} kayıt bulundu.');
+      return list;
+    } catch (e) {
+      AppLogger.warning('getDeletedEntries başarısız, get-all çekiliyor: $e');
+      final snapshot = await _firestore.collection('entries').get();
+      final list = snapshot.docs
+          .map((doc) => ExpenseEntry.fromJson(doc.data(), doc.id))
+          .where((entry) => entry.status == 'deleted')
+          .toList();
+      AppLogger.info('getDeletedEntries (Post-filter): ${list.length} kayıt bulundu.');
+      return list;
+    }
+  }
+
+  /// Belirli bir tipteki kayıtları Future olarak döndürür (income, expense vs)
+  /// Performans optimizasyonu için
+  static Future<List<ExpenseEntry>> getEntriesByType(String entryType) async {
+    _ensureAuthenticated();
+    try {
+      final snapshot = await _firestore
+          .collection('entries')
+          .where('entryType', isEqualTo: entryType)
+          .orderBy('createdAt', descending: true)
+          .get()
+          .timeout(
+            const Duration(seconds: AppConfig.firestoreTimeoutSeconds),
+            onTimeout: () {
+              throw Exception('Firestore sorgu zaman aşımı. İnternet bağlantınızı kontrol edin.');
+            },
+          );
+      
+      return snapshot.docs
+          .map((doc) => ExpenseEntry.fromJson(doc.data(), doc.id))
+          .where((e) => e.status == 'active')
+          .toList();
+    } on FirebaseException catch (e) {
+      AppLogger.error('Firestore getEntriesByType FirebaseException: ${e.code} - ${e.message}', e);
+      throw Exception('Firestore hatası: ${e.code} - ${e.message}');
+    } catch (e) {
+      AppLogger.error('Firestore getEntriesByType genel hata', e);
       throw Exception('Firestore hatası: ${e.toString()}');
     }
   }
@@ -248,7 +371,7 @@ class FirestoreService {
         ...entry.toJson(),
         'createdAt': FieldValue.serverTimestamp(),
         }).timeout(
-          Duration(seconds: AppConfig.firestoreTimeoutSeconds),
+          const Duration(seconds: AppConfig.firestoreTimeoutSeconds),
         onTimeout: () {
           throw Exception('Firestore kayıt zaman aşımı. İnternet bağlantınızı kontrol edin.');
         },
@@ -260,20 +383,20 @@ class FirestoreService {
     }
   }
 
-  /// Harcama kaydını siler (sadece sahibi silebilir)
+  /// Harcama kaydını yumuşak siler (status: 'deleted' yapar)
   static Future<void> deleteEntry(String entryId, String userId) async {
     try {
       // Önce entry'yi kontrol et
       final entryRef = _firestore.collection('entries').doc(entryId);
       final entryDoc = await entryRef.get().timeout(
-        Duration(seconds: AppConfig.firestoreTimeoutSeconds),
+        const Duration(seconds: AppConfig.firestoreTimeoutSeconds),
         onTimeout: () {
-          throw Exception('Firestore bağlantı zaman aşımı. İnternet bağlantınızı kontrol edin.');
+          throw Exception('İnternet bağlantınızı kontrol edin ve tekrar deneyin.');
         },
       );
 
       if (!entryDoc.exists) {
-        throw Exception('Kayıt bulunamadı.');
+        throw Exception('Bu kayıt artık mevcut değil.');
       }
 
       final entryData = entryDoc.data();
@@ -281,20 +404,100 @@ class FirestoreService {
 
       // Owner kontrolü
       if (ownerId != userId) {
-        throw Exception('Bu kaydı silme yetkiniz yok. Sadece kendi kayıtlarınızı silebilirsiniz.');
+        throw Exception('Sadece kendi oluşturduğunuz kayıtları silebilirsiniz.');
       }
 
-      // Entry'yi sil
-      await entryRef.delete().timeout(
-        Duration(seconds: AppConfig.firestoreTimeoutSeconds),
+      // Entry'yi silmek yerine status'u 'deleted' yap
+      await entryRef.update({
+        'status': 'deleted',
+        'deletedAt': FieldValue.serverTimestamp(),
+      }).timeout(
+        const Duration(seconds: AppConfig.firestoreTimeoutSeconds),
         onTimeout: () {
-          throw Exception('Firestore silme zaman aşımı. İnternet bağlantınızı kontrol edin.');
+          throw Exception('İşlem zaman aşımına uğradı. Lütfen tekrar deneyin.');
         },
       );
     } on FirebaseException catch (e) {
-      throw Exception('Firestore hatası: ${e.code} - ${e.message}');
+      AppLogger.error('Firestore silme hatası', e);
+      if (e.code == 'permission-denied') {
+        throw Exception('Sadece kendi oluşturduğunuz kayıtları silebilirsiniz.');
+      }
+      throw Exception('Bir hata oluştu. Lütfen tekrar deneyin.');
     } catch (e) {
-      throw Exception('Firestore hatası: ${e.toString()}');
+      final msg = e.toString().replaceFirst('Exception: ', '');
+      if (msg.contains('kendi') || msg.contains('mevcut') || msg.contains('bağlantı') || msg.contains('zaman aşımı')) {
+        rethrow;
+      }
+      throw Exception('Bir hata oluştu. Lütfen tekrar deneyin.');
+    }
+  }
+
+  /// Birden fazla harcama kaydını siler (Toplu silme)
+  /// Sadece kullanıcının kendi kayıtlarını siler, başkalarının kayıtlarını atlar
+  /// Dönen Map: {'deleted': silinenlerin sayısı, 'skipped': atlanların sayısı}
+  static Future<Map<String, int>> deleteEntriesBatch(List<String> entryIds, String userId) async {
+    try {
+      // Önce tüm belgeleri çek ve sadece kullanıcının kendi kayıtlarını filtrele
+      final List<String> ownedIds = [];
+      int skipped = 0;
+
+      // Belgeleri 10'arlı gruplar halinde kontrol et (paralel)
+      for (var i = 0; i < entryIds.length; i += 10) {
+        final chunk = entryIds.sublist(i, i + 10 > entryIds.length ? entryIds.length : i + 10);
+        final futures = chunk.map((id) => _firestore.collection('entries').doc(id).get());
+        final docs = await Future.wait(futures);
+        
+        for (final doc in docs) {
+          if (doc.exists && doc.data()?['ownerId'] == userId) {
+            ownedIds.add(doc.id);
+          } else {
+            skipped++;
+          }
+        }
+      }
+
+      if (ownedIds.isEmpty) {
+        return {'deleted': 0, 'skipped': skipped};
+      }
+
+      // Sadece kullanıcının kendi kayıtlarını sil
+      final batch = _firestore.batch();
+      int count = 0;
+
+      for (var entryId in ownedIds) {
+        final docRef = _firestore.collection('entries').doc(entryId);
+        batch.update(docRef, {
+          'status': 'deleted',
+          'deletedAt': FieldValue.serverTimestamp(),
+        });
+        count++;
+        if (count >= 495) break;
+      }
+
+      if (count > 0) {
+        await batch.commit().timeout(
+          const Duration(seconds: AppConfig.firestoreTimeoutSeconds),
+          onTimeout: () {
+            throw Exception('İşlem zaman aşımına uğradı. Lütfen tekrar deneyin.');
+          },
+        );
+        AppLogger.info('Toplu silme başarılı: $count kayıt silindi, $skipped kayıt atlandı (başka kullanıcıya ait)');
+      }
+
+      return {'deleted': count, 'skipped': skipped};
+    } on FirebaseException catch (e) {
+      AppLogger.error('Firestore toplu silme hatası', e);
+      if (e.code == 'permission-denied') {
+        throw Exception('Sadece kendi oluşturduğunuz kayıtları silebilirsiniz.');
+      }
+      throw Exception('Bir hata oluştu. Lütfen tekrar deneyin.');
+    } catch (e) {
+      AppLogger.error('Firestore toplu silme genel hata', e);
+      final msg = e.toString().replaceFirst('Exception: ', '');
+      if (msg.contains('kendi') || msg.contains('zaman aşımı')) {
+        rethrow;
+      }
+      throw Exception('Bir hata oluştu. Lütfen tekrar deneyin.');
     }
   }
 
@@ -302,7 +505,7 @@ class FirestoreService {
   static Future<List<String>> getAllOwnerNames() async {
     try {
       final snapshot = await _firestore.collection('entries').get().timeout(
-        Duration(seconds: AppConfig.firestoreTimeoutSeconds),
+        const Duration(seconds: AppConfig.firestoreTimeoutSeconds),
         onTimeout: () {
           throw Exception('Firestore sorgu zaman aşımı. İnternet bağlantınızı kontrol edin.');
         },
@@ -383,7 +586,7 @@ class FirestoreService {
       }
 
       final snapshot = await query.get().timeout(
-        Duration(seconds: AppConfig.firestoreTimeoutSeconds),
+        const Duration(seconds: AppConfig.firestoreTimeoutSeconds),
         onTimeout: () {
           throw Exception('Firestore sorgu zaman aşımı. İnternet bağlantınızı kontrol edin.');
         },
@@ -517,7 +720,7 @@ class FirestoreService {
         ...expense.toJson(),
         'createdAt': FieldValue.serverTimestamp(),
       }).timeout(
-        Duration(seconds: AppConfig.firestoreTimeoutSeconds),
+        const Duration(seconds: AppConfig.firestoreTimeoutSeconds),
         onTimeout: () {
           throw Exception('Firestore kayıt zaman aşımı. İnternet bağlantınızı kontrol edin.');
         },
@@ -538,7 +741,7 @@ class FirestoreService {
       await _firestore.collection('fixed_expenses').doc(expense.id).update({
         ...expense.toJson(),
       }).timeout(
-        Duration(seconds: AppConfig.firestoreTimeoutSeconds),
+        const Duration(seconds: AppConfig.firestoreTimeoutSeconds),
         onTimeout: () {
           throw Exception('Firestore güncelleme zaman aşımı. İnternet bağlantınızı kontrol edin.');
         },
@@ -555,7 +758,7 @@ class FirestoreService {
     try {
       final expenseRef = _firestore.collection('fixed_expenses').doc(expenseId);
       final expenseDoc = await expenseRef.get().timeout(
-        Duration(seconds: AppConfig.firestoreTimeoutSeconds),
+        const Duration(seconds: AppConfig.firestoreTimeoutSeconds),
         onTimeout: () {
           throw Exception('Firestore bağlantı zaman aşımı. İnternet bağlantınızı kontrol edin.');
         },
@@ -573,7 +776,7 @@ class FirestoreService {
       }
 
       await expenseRef.delete().timeout(
-        Duration(seconds: AppConfig.firestoreTimeoutSeconds),
+        const Duration(seconds: AppConfig.firestoreTimeoutSeconds),
         onTimeout: () {
           throw Exception('Firestore silme zaman aşımı. İnternet bağlantınızı kontrol edin.');
         },
@@ -589,7 +792,7 @@ class FirestoreService {
   static Future<List<FixedExpense>> getAllFixedExpenses() async {
     try {
       final snapshot = await _firestore.collection('fixed_expenses').get().timeout(
-        Duration(seconds: AppConfig.firestoreTimeoutSeconds),
+        const Duration(seconds: AppConfig.firestoreTimeoutSeconds),
         onTimeout: () {
           throw Exception('Firestore sorgu zaman aşımı. İnternet bağlantınızı kontrol edin.');
         },
@@ -611,6 +814,5 @@ class FirestoreService {
       throw Exception('Firestore hatası: ${e.toString()}');
     }
   }
-
 }
 

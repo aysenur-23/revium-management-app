@@ -1,7 +1,6 @@
-/**
- * Dosya referans modeli
- * Google Drive'da saklanan dosyalar için metadata
- */
+/// Dosya referans modeli
+/// Google Drive'da saklanan dosyalar için metadata
+library;
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 

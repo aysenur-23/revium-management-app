@@ -1,14 +1,14 @@
-/**
- * Google Sheets Servisi
- * Supabase Edge Function üzerinden Google Sheets'ten sabit giderleri okur
- */
+/// Google Sheets Servisi
+/// Firebase Cloud Functions üzerinden Google Sheets'ten sabit giderleri okur
+library;
 
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'dart:async';
-import '../config/app_config.dart';
 import '../models/fixed_expense.dart';
+import '../models/fuar.dart';
 import '../utils/app_logger.dart';
+import 'upload_service.dart' show getBackendBaseUrl;
 
 class GoogleSheetsService {
   // Cache mekanizması: Aynı anda gelen istekler aynı Future'i paylaşır
@@ -84,17 +84,14 @@ class GoogleSheetsService {
           await Future.delayed(Duration(seconds: 2 * attempt)); // Exponential backoff
         }
         
-        final baseUrl = AppConfig.productionBackendUrl;
+        // Backend URL'ini al
+        final baseUrl = await getBackendBaseUrl();
         final uri = Uri.parse('$baseUrl?endpoint=fixed-expenses');
 
         AppLogger.info('📊 Google Sheets\'ten sabit giderler yükleniyor... (attempt ${attempt + 1}/${maxRetries + 1})');
         AppLogger.debug('📊 Endpoint URL: $uri');
 
         final request = http.Request('GET', uri);
-        request.headers['apikey'] = AppConfig.supabaseAnonKey;
-        request.headers['Authorization'] = 'Bearer ${AppConfig.supabaseAnonKey}';
-        
-        AppLogger.debug('📊 Request headers: apikey ve Authorization eklendi');
 
         final response = await request.send().timeout(
           timeoutDuration,
@@ -135,6 +132,7 @@ class GoogleSheetsService {
               ownerName: expenseJson['ownerName'] as String? ?? 'Sistem',
               description: expenseJson['description'] as String? ?? '',
               amount: (expenseJson['amount'] as num?)?.toDouble() ?? 0.0,
+              yearlyAmount: (expenseJson['yearlyAmount'] as num?)?.toDouble(),
               category: expenseJson['category'] as String?,
               recurrence: expenseJson['recurrence'] as String?,
               notes: expenseJson['notes'] as String?,
@@ -167,8 +165,31 @@ class GoogleSheetsService {
           } catch (_) {
             // JSON parse edilemezse body'yi kullan
             if (errorBody.length < 500) {
-              errorMessage += ' - ${errorBody}';
+              errorMessage += ' - $errorBody';
             }
+          }
+          
+          // 404 hatası için özel mesaj
+          if (response.statusCode == 404) {
+            String detailedMessage = errorMessage;
+            if (errorBody.contains('Google Sheets dosyası bulunamadı') || errorBody.contains('bulunamadı')) {
+              // Direkt dosya ID'si veya klasör ID'si kontrolü
+              if (errorBody.contains('GOOGLE_SHEETS_FIXED_EXPENSES_ID')) {
+                detailedMessage = 'Google Sheets dosyası bulunamadı. Lütfen backend\'de GOOGLE_SHEETS_FIXED_EXPENSES_ID environment variable\'ının doğru dosya ID\'sini içerdiğinden ve Service Account\'a dosya erişimi verildiğinden emin olun.';
+              } else if (errorBody.contains('GOOGLE_SHEETS_FOLDER_ID')) {
+                detailedMessage = 'Google Sheets dosyası bulunamadı. Lütfen "Sabit Giderler" adlı Google Sheets dosyasının doğru klasörde olduğundan ve backend\'de GOOGLE_SHEETS_FOLDER_ID environment variable\'ının ayarlandığından emin olun.';
+              } else {
+                detailedMessage = 'Google Sheets dosyası bulunamadı. Lütfen backend\'de GOOGLE_SHEETS_FIXED_EXPENSES_ID veya GOOGLE_SHEETS_FOLDER_ID environment variable\'larının ayarlandığından ve Service Account\'a erişim verildiğinden emin olun.';
+              }
+            } else if (errorBody.contains('GOOGLE_SHEETS_FOLDER_ID') || errorBody.contains('GOOGLE_SHEETS_FIXED_EXPENSES_ID')) {
+              detailedMessage = 'Google Sheets environment variable\'ı ayarlanmamış. Backend\'de .env dosyasına GOOGLE_SHEETS_FIXED_EXPENSES_ID (direkt dosya ID\'si) veya GOOGLE_SHEETS_FOLDER_ID (klasör ID\'si) ekleyin.';
+            }
+            throw Exception(detailedMessage);
+          }
+          
+          // 403 hatası için özel mesaj
+          if (response.statusCode == 403) {
+            throw Exception('Google Sheets dosyasına erişim izni yok. Dosyayı "Herkes linki olan herkes görüntüleyebilir" olarak paylaşın veya Service Account\'a erişim verin.');
           }
           
           // 504 (Gateway Timeout) veya timeout hataları için retry yap
@@ -199,7 +220,7 @@ class GoogleSheetsService {
               errorString.contains('failed host lookup') ||
               errorString.contains('no address associated with hostname') ||
               errorString.contains('network is unreachable')) {
-            throw Exception('Supabase\'e bağlanılamıyor. İnternet bağlantınızı kontrol edin veya daha sonra tekrar deneyin.');
+            throw Exception('Backend\'e bağlanılamıyor. İnternet bağlantınızı kontrol edin veya daha sonra tekrar deneyin.');
           }
           
           if (e is Exception) {
@@ -223,6 +244,32 @@ class GoogleSheetsService {
     _lastCacheTime = null;
     _isRequestInProgress = false;
     AppLogger.debug('📊 Google Sheets cache temizlendi');
+  }
+
+  /// Backend'den fuarlar listesini getirir (?endpoint=fuarlar)
+  static Future<List<Fuar>> getFuarlar() async {
+    final baseUrl = await getBackendBaseUrl();
+    final uri = Uri.parse('$baseUrl?endpoint=fuarlar');
+    const timeoutDuration = Duration(seconds: 30);
+    final response = await http.get(uri).timeout(
+      timeoutDuration,
+      onTimeout: () {
+        throw TimeoutException('Fuarlar listesi zaman aşımı', timeoutDuration);
+      },
+    );
+    if (response.statusCode != 200) {
+      String msg = 'Fuarlar yüklenemedi (${response.statusCode})';
+      try {
+        final j = jsonDecode(response.body) as Map<String, dynamic>?;
+        if (j != null) msg = j['message'] as String? ?? j['error'] as String? ?? msg;
+      } catch (_) {}
+      throw Exception(msg);
+    }
+    final json = jsonDecode(response.body) as Map<String, dynamic>;
+    final list = json['fuarlar'] as List<dynamic>? ?? [];
+    return list
+        .map((e) => Fuar.fromJson(Map<String, dynamic>.from(e as Map)))
+        .toList();
   }
 }
 

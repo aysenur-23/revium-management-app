@@ -1,7 +1,6 @@
-/**
- * Google Drive URL builder
- * Dosya tipine göre indirme URL'lerini oluşturur
- */
+/// Google Drive URL builder
+/// Dosya tipine göre indirme URL'lerini oluşturur
+library;
 
 import '../../models/app_file_reference.dart';
 import '../../utils/app_logger.dart';

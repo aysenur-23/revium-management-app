@@ -1,7 +1,6 @@
-/**
- * Responsive design yardımcı sınıfı
- * Farklı ekran boyutlarına göre dinamik değerler sağlar
- */
+/// Responsive design yardımcı sınıfı
+/// Farklı ekran boyutlarına göre dinamik değerler sağlar
+library;
 
 import 'package:flutter/material.dart';
 

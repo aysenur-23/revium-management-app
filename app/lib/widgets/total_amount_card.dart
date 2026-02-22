@@ -1,7 +1,6 @@
-/**
- * Toplam miktar kartı
- * Liste ekranlarında toplam harcama miktarını gösterir
- */
+/// Toplam miktar kartı
+/// Liste ekranlarında toplam harcama miktarını gösterir
+library;
 
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';

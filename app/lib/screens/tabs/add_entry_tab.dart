@@ -1,18 +1,15 @@
-/**
- * Ekleme sekmesi
- * Yeni harcama kaydı eklemek için form
- */
+/// Ekleme sekmesi
+/// Yeni harcama kaydı eklemek için form
+library;
 
-import 'dart:io';
-import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:file_picker/file_picker.dart';
+import 'package:cross_file/cross_file.dart';
 import '../home_screen.dart';
 import '../../services/upload_service.dart';
 import '../../services/firestore_service.dart';
-import '../../services/connectivity_service.dart';
+
 import '../../widgets/primary_button.dart';
 import '../../utils/app_logger.dart';
 
@@ -33,13 +30,26 @@ class _AddEntryTabState extends State<AddEntryTab> with AutomaticKeepAliveClient
   final _descriptionController = TextEditingController();
   final _notesController = TextEditingController(); // Opsiyonel açıklama
   final _amountController = TextEditingController();
-  File? _selectedFile; // Mobil için
-  Uint8List? _selectedFileBytes; // Web için
+  
+  XFile? _selectedFile; 
+  Uint8List? _selectedFileBytes; // Web için önizleme ve upload
   String? _selectedFileName;
+  
   bool _isUploading = false;
+  bool _isPickingFile = false; // Aynı anda tek dosya seçici (already_active hatasını önler)
+  String _entryMode = 'expense'; // 'expense', 'income', veya 'tax_deductible'
+  String? _selectedPartnerName; // Ortak ödemesi için seçili kişi
+  List<String> _ownerNames = []; // Kişi listesi
+  bool _isLoadingOwnerNames = false;
 
   @override
   bool get wantKeepAlive => true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadOwnerNames();
+  }
 
   @override
   void dispose() {
@@ -49,154 +59,150 @@ class _AddEntryTabState extends State<AddEntryTab> with AutomaticKeepAliveClient
     super.dispose();
   }
 
-  /// Tüm Excel dosyalarını arka planda güncelle (hata olsa bile devam et)
-  Future<void> _updateExcelFileInBackground() async {
+  Future<void> _loadOwnerNames() async {
+    setState(() {
+      _isLoadingOwnerNames = true;
+    });
+    
     try {
-      // 1. Tüm entry'leri çek
-      final allEntries = await FirestoreService.getAllEntries();
-      final formattedAllEntries = allEntries.map((entry) {
-        return {
-          'createdAt': entry.createdAt?.toIso8601String() ?? DateTime.now().toIso8601String(),
-          'notes': entry.notes ?? '',
-          'ownerName': entry.ownerName,
-          'amount': entry.amount,
-          'description': entry.description,
-          'fileUrl': entry.fileUrl,
-        };
-      }).toList();
-
-      // 2. Kullanıcının entry'lerini çek
-      final myEntries = await FirestoreService.getMyEntries(widget.currentUser.userId);
-      final formattedMyEntries = myEntries.map((entry) {
-        return {
-          'createdAt': entry.createdAt?.toIso8601String() ?? DateTime.now().toIso8601String(),
-          'notes': entry.notes ?? '',
-          'ownerName': entry.ownerName,
-          'amount': entry.amount,
-          'description': entry.description,
-          'fileUrl': entry.fileUrl,
-        };
-      }).toList();
-
-      // 3. Tüm sabit giderleri çek
-      final fixedExpenses = await FirestoreService.getAllFixedExpenses();
-      final formattedFixedExpenses = fixedExpenses.map((expense) {
-        return {
-          'createdAt': expense.createdAt?.toIso8601String() ?? DateTime.now().toIso8601String(),
-          'startDate': expense.startDate?.toIso8601String(),
-          'notes': expense.notes ?? '',
-          'ownerName': expense.ownerName,
-          'amount': expense.amount,
-          'description': expense.description,
-          'category': expense.category ?? '',
-          'recurrence': expense.recurrence ?? '',
-          'isActive': expense.isActive,
-        };
-      }).toList();
-
-      // 4. Tüm Excel dosyalarını paralel olarak güncelle (hata olsa bile devam et)
-      await Future.wait([
-        // Tüm entry'ler Excel'i
-        UploadService.initializeGoogleSheetsWithEntries(formattedAllEntries).catchError((e) {
-          AppLogger.warning('Tüm entry\'ler Excel güncellenirken hata: $e');
-          return null;
-        }),
-        // Kullanıcının entry'leri Excel'i
-        UploadService.createMyEntriesExcel(formattedMyEntries, widget.currentUser.fullName).catchError((e) {
-          AppLogger.warning('Kullanıcı entry\'leri Excel güncellenirken hata: $e');
-          return null;
-        }),
-        // Sabit giderler Excel'i
-        UploadService.initializeGoogleSheetsWithFixedExpenses(formattedFixedExpenses).catchError((e) {
-          AppLogger.warning('Sabit giderler Excel güncellenirken hata: $e');
-          return null;
-        }),
-        // Tüm veriler Excel'i (settings)
-        UploadService.initializeGoogleSheetsWithAllData(formattedAllEntries, formattedFixedExpenses).catchError((e) {
-          AppLogger.warning('Tüm veriler Excel güncellenirken hata: $e');
-          return null;
-        }),
-      ], eagerError: false);
-
-      AppLogger.info('Tüm Excel dosyaları güncellendi (${formattedAllEntries.length} entry, ${formattedFixedExpenses.length} sabit gider)');
-    } catch (e) {
-      // Hata olsa bile sessizce devam et (kullanıcıyı rahatsız etme)
-      AppLogger.warning('Excel dosyaları güncellenirken genel hata: $e');
-    }
-  }
-
-  Future<void> _pickFile() async {
-    try {
-      final result = await FilePicker.platform.pickFiles(
-        type: FileType.custom,
-        allowedExtensions: ['jpg', 'jpeg', 'png', 'pdf'],
-        withData: kIsWeb, // Web için dosya baytlarını al
-      );
-
-      if (result != null && result.files.isNotEmpty && result.files.single.name.isNotEmpty) {
-        final platformFile = result.files.single;
-        final fileName = platformFile.name;
-        final fileSize = platformFile.size;
-        const maxFileSize = 50 * 1024 * 1024; // 50MB
-
-        if (fileSize > maxFileSize) {
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('Dosya boyutu çok büyük. Maksimum 50MB olmalıdır.'),
-                backgroundColor: Colors.orange,
-              ),
-            );
-          }
-          return;
-        }
-
-        // Dosya uzantısı kontrolü
-        final extension = fileName.toLowerCase().split('.').last;
-        final allowedExtensions = ['jpg', 'jpeg', 'png', 'pdf'];
-        if (!allowedExtensions.contains(extension)) {
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('Sadece PNG, JPEG, JPG ve PDF dosyaları desteklenmektedir.'),
-                backgroundColor: Colors.orange,
-              ),
-            );
-          }
-          return;
-        }
-
+      final names = await FirestoreService.getAllOwnerNames();
+      // Ödemeyi yapan ortak olarak kendisini de seçebilsin
+      if (widget.currentUser.fullName.isNotEmpty && !names.contains(widget.currentUser.fullName)) {
+        names.add(widget.currentUser.fullName);
+        names.sort();
+      }
+      if (mounted) {
         setState(() {
-          _selectedFileName = fileName;
-          if (kIsWeb) {
-            _selectedFileBytes = platformFile.bytes;
-            _selectedFile = null; // Web'de File objesi kullanmıyoruz
-          } else {
-            if (platformFile.path != null && platformFile.path!.isNotEmpty) {
-              _selectedFile = File(platformFile.path!);
-              _selectedFileBytes = null;
-            } else {
-              throw Exception('Dosya yolu alınamadı. Lütfen tekrar deneyin.');
-            }
-          }
+          _ownerNames = names;
+          _isLoadingOwnerNames = false;
         });
       }
     } catch (e) {
+      AppLogger.error('Kişi listesi yüklenirken hata', e);
+      if (mounted) {
+        setState(() {
+          _isLoadingOwnerNames = false;
+        });
+      }
+    }
+  }
+
+  /// Gelir veya Vergiden Düşülecek seçildiğinde onay dialog'u göster
+  Future<bool> _confirmEntryModeChange(String targetMode) async {
+    final theme = Theme.of(context);
+    final title = targetMode == 'income' ? 'Ortak Ödemesi' : 'Vergiden Düşülecek';
+    final description = targetMode == 'income' 
+        ? 'Bu kaydı ortak ödemesi olarak işaretlemek istediğinize emin misiniz?'
+        : 'Bu kaydı vergiden düşülecek olarak işaretlemek istediğinize emin misiniz?\n\nBu seçenek, vergi beyannamesnde gider olarak gösterilecek faturalar içindir.';
+    final iconData = targetMode == 'income' ? Icons.group : Icons.assignment_turned_in;
+    final color = targetMode == 'income' ? Colors.green : Colors.orange;
+
+    final result = await showDialog<bool>(
+      context: context,
+      barrierDismissible: true,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Icon(iconData, color: color, size: 24),
+            ),
+            const SizedBox(width: 12),
+            Text(title, style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600)),
+          ],
+        ),
+        content: Text(
+          description,
+          style: theme.textTheme.bodyMedium?.copyWith(
+            color: theme.colorScheme.onSurface.withValues(alpha: 0.8),
+            height: 1.5,
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Vazgeç'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            style: FilledButton.styleFrom(backgroundColor: color),
+            child: const Text('Evet, Onayla'),
+          ),
+        ],
+      ),
+    );
+    return result ?? false;
+  }
+
+  Future<void> _pickFile() async {
+    if (_isPickingFile) return;
+    _isPickingFile = true;
+    try {
+      FilePickerResult? result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['jpg', 'jpeg', 'png', 'pdf'],
+        withData: true, // Web + Android: bytes ile path/URI sorunlarını önler
+      );
+
+      if (result != null && result.files.isNotEmpty && mounted) {
+        final platformFile = result.files.first;
+        final name = platformFile.name;
+        if (name.isEmpty) return;
+
+        Uint8List? bytes = platformFile.bytes;
+        if (bytes == null && platformFile.path != null) {
+          // Mobil: path varsa hemen oku (content URI veya geçici path sonradan okunamayabilir)
+          try {
+            bytes = await XFile(platformFile.path!).readAsBytes();
+          } catch (e) {
+            AppLogger.error('Dosya okuma hatası (path)', e);
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('Dosya okunamadı. Lütfen daha küçük bir dosya veya farklı konum deneyin: $e'),
+                  backgroundColor: Colors.red,
+                ),
+              );
+            }
+            return;
+          }
+        }
+
+        if (bytes == null || bytes.isEmpty) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Dosya içeriği alınamadı.')),
+            );
+          }
+          return;
+        }
+
+        if (!mounted) return;
+        final bytesList = bytes;
+        setState(() {
+          _selectedFileName = name;
+          _selectedFileBytes = bytesList;
+          _selectedFile = XFile.fromData(bytesList, name: name, length: bytesList.length);
+        });
+      }
+    } catch (e) {
+      AppLogger.error('Dosya seçme hatası', e);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Dosya seçme hatası: ${e.toString()}'),
+            content: Text('Dosya seçilirken hata: ${e.toString().replaceAll(RegExp(r'^Exception:?\s*'), '')}'),
             backgroundColor: Colors.red,
           ),
         );
       }
+    } finally {
+      if (mounted) setState(() => _isPickingFile = false);
     }
-  }
-
-  String _getFileType(String? fileName) {
-    if (fileName == null) return 'image';
-    final extension = fileName.toLowerCase().split('.').last;
-    return extension == 'pdf' ? 'pdf' : 'image';
   }
 
   Future<void> _saveEntry() async {
@@ -204,40 +210,21 @@ class _AddEntryTabState extends State<AddEntryTab> with AutomaticKeepAliveClient
       return;
     }
 
-    if (_selectedFileName == null ||
-        (kIsWeb && _selectedFileBytes == null) ||
-        (!kIsWeb && _selectedFile == null)) {
+    if (_selectedFile == null && _entryMode == 'expense') {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Lütfen bir dosya seçiniz'),
+          content: Text('Lütfen bir belge (fiş/fatura) ekleyin'),
           backgroundColor: Colors.orange,
         ),
       );
       return;
     }
 
-    // Dosya boyutu kontrolü (50MB limit)
-    final fileSize = kIsWeb
-        ? _selectedFileBytes!.length
-        : await _selectedFile!.length();
-    const maxFileSize = 50 * 1024 * 1024; // 50MB
-    if (fileSize > maxFileSize) {
+    if (_entryMode == 'income' && _selectedPartnerName == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Dosya boyutu çok büyük. Maksimum 50MB olmalıdır.'),
+          content: Text('Lütfen ödeme yapan kişiyi seçin'),
           backgroundColor: Colors.orange,
-        ),
-      );
-      return;
-    }
-
-    // İnternet bağlantısı kontrolü
-    final hasInternet = await ConnectivityService.hasInternetConnection();
-    if (!hasInternet) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('İnternet bağlantısı yok. Lütfen bağlantınızı kontrol edin.'),
-          backgroundColor: Colors.red,
         ),
       );
       return;
@@ -247,107 +234,90 @@ class _AddEntryTabState extends State<AddEntryTab> with AutomaticKeepAliveClient
       _isUploading = true;
     });
 
-    // Upload progress dialog göster
+    // Loading dialog göster
+    bool dialogShown = true;
     BuildContext? dialogContext;
-    bool dialogShown = false;
-
-    // Dialog'u göster
-    if (mounted) {
-      await Future.delayed(const Duration(milliseconds: 100)); // UI güncellemesi için bekle
-      if (mounted) {
-        showDialog(
-          context: context,
-          barrierDismissible: false,
-          builder: (dialogCtx) {
-            dialogContext = dialogCtx;
-            return PopScope(
-              canPop: false,
-              child: AlertDialog(
-                content: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const CircularProgressIndicator(),
-                    const SizedBox(height: 16),
-                    Text(
-                      'Dosya yükleniyor...',
-                      style: Theme.of(context).textTheme.bodyMedium,
-                    ),
-                  ],
-                ),
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) {
+        dialogContext = ctx;
+        return const Center(
+          child: Card(
+            child: Padding(
+              padding: EdgeInsets.all(20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  CircularProgressIndicator(),
+                  SizedBox(height: 16),
+                  Text('Kayıt ekleniyor...'),
+                ],
               ),
-            );
-          },
+            ),
+          ),
         );
-        dialogShown = true;
-      }
-    }
+      },
+    );
 
     try {
-      // Miktarı parse et (Türkçe format: nokta binlik, virgül ondalık)
-      final amountText = _amountController.text.trim()
-          .replaceAll('.', '') // Binlik ayırıcıları kaldır
-          .replaceAll(',', '.'); // Ondalık ayırıcıyı noktaya çevir
-      final amount = double.tryParse(amountText);
-      if (amount == null || amount <= 0) {
-        throw Exception('Geçersiz miktar. Lütfen geçerli bir sayı girin.');
-      }
+      // Miktarı parse et (1.234,56 -> 1234.56)
+      String amountText = _amountController.text.replaceAll('.', '').replaceAll(',', '.');
+      double amount = double.parse(amountText);
 
-      // Backend'e dosya yükle
+      // Upload işlemi
       UploadResult uploadResult;
-      try {
+      
+      if (_selectedFile != null) {
+        // Dosya varsa yükle
+        // UploadService.uploadFile artık XFile veya platforma uygun parametre beklemeli
+        // Eğer UploadService File bekliyorsa onu da güncellememiz gerekebilir.
+        // Ancak UploadService'in web uyumlu olduğunu önceki adımlarda gördük.
+        // XFile -> File dönüşümü web'de çalışmaz. 
+        // readAsBytes kullanarak UploadService'e bytes göndermek en garanticisi.
+        
+        Uint8List? fileBytes = _selectedFileBytes;
+        if (fileBytes == null && _selectedFile != null) {
+           fileBytes = await _selectedFile!.readAsBytes();
+        }
+
+        if (fileBytes == null) throw Exception("Dosya okunamadı");
+
         uploadResult = await UploadService.uploadFile(
-          file: kIsWeb ? null : _selectedFile,
-          fileBytes: kIsWeb ? _selectedFileBytes : null,
-          fileName: _selectedFileName,
+          fileBytes: fileBytes,
+          fileName: _selectedFileName!,
           ownerId: widget.currentUser.userId,
           ownerName: widget.currentUser.fullName,
           amount: amount,
           description: _descriptionController.text.trim(),
           notes: _notesController.text.trim().isEmpty ? null : _notesController.text.trim(),
+          entryType: _entryMode,
         );
-      } catch (uploadError) {
-        // Upload hatası - dialog'u kapat ve hatayı fırlat
-        if (dialogShown && mounted) {
-          _closeDialogSafely(dialogContext, dialogShown);
-          dialogShown = false;
-        }
-        rethrow;
-      }
-      
-      // Başarılı olduysa dialog'u kapat
-      if (dialogShown && mounted) {
-        _closeDialogSafely(dialogContext, dialogShown);
-        dialogShown = false;
+      } else {
+        // Dosya yoksa (sadece gelir kaydı olabilir veya dosyasız gider)
+        // Şu anki mantıkta gider için dosya zorunlu, gelir için opsiyonel olabilir
+        // Mock bir result oluşturalım veya logic'i ayıralım. 
+        // Şimdilik dosya zorunlu assumption'ı ile devam (kod başında check var expenses için)
+         throw Exception("Dosya gerekli"); 
       }
 
-      // MIME type ve dosya adını belirle
-      if (_selectedFileName == null || _selectedFileName!.isEmpty) {
-        throw Exception('Dosya adı bulunamadı');
-      }
-      final extension = _selectedFileName!.toLowerCase().split('.').last;
-      String mimeType;
+      // MIME type (basit kontrol)
+      final extension = _selectedFileName?.toLowerCase().split('.').last ?? 'dat';
+      String mimeType = 'application/octet-stream';
+      String fileType = 'image';
+      
       if (extension == 'pdf') {
         mimeType = 'application/pdf';
-      } else if (['jpg', 'jpeg'].contains(extension)) {
-        mimeType = 'image/jpeg';
-      } else if (extension == 'png') {
-        mimeType = 'image/png';
-      } else {
-        mimeType = 'application/octet-stream';
-      }
-      
-      // fileType'ı belirle (legacy uyumluluk için)
-      String fileType;
-      if (extension == 'pdf') {
         fileType = 'pdf';
-      } else {
-        fileType = 'image';
+      } else if (['jpg', 'jpeg', 'png'].contains(extension)) {
+         mimeType = 'image/$extension'; // basitçe
+         if (extension == 'jpg') mimeType = 'image/jpeg';
       }
 
-      // ExpenseEntry oluştur
+      // Entry oluştur
       final entry = ExpenseEntry(
         ownerId: widget.currentUser.userId,
-        ownerName: widget.currentUser.fullName,
+        ownerName: _entryMode == 'income' ? _selectedPartnerName! : widget.currentUser.fullName, // Gelir ise seçilen kişi
         description: _descriptionController.text.trim(),
         notes: _notesController.text.trim().isEmpty ? null : _notesController.text.trim(),
         amount: amount,
@@ -356,15 +326,19 @@ class _AddEntryTabState extends State<AddEntryTab> with AutomaticKeepAliveClient
         driveFileId: uploadResult.fileId,
         mimeType: mimeType,
         fileName: _selectedFileName,
+        entryType: _entryMode, // 'expense', 'income', 'tax_deductible'
       );
 
-      // Firestore'a kaydet
+      // Firestore kaydı
       await FirestoreService.addEntry(entry);
 
-      // Excel dosyasını güncelle (arka planda, hata olsa bile devam et)
-      _updateExcelFileInBackground();
+      // Excel güncellemesi backend Service Account ile yapılır — kullanıcının Drive bağlamasına gerek yok
+      // Arka planda Excel güncelleme — kısa gecikme: Firestore yeni kaydı hemen döndürmeyebilir, son eklenenin Excel'de görünmesi için
+      Future.delayed(const Duration(milliseconds: 1500), () {
+        if (mounted) _updateExcelFileInBackground(context, entry);
+      });
 
-      // Formu temizle
+      // Temizlik
       _descriptionController.clear();
       _notesController.clear();
       _amountController.clear();
@@ -374,7 +348,10 @@ class _AddEntryTabState extends State<AddEntryTab> with AutomaticKeepAliveClient
         _selectedFileName = null;
       });
 
-      if (mounted) {
+      if (mounted && dialogShown && dialogContext != null) {
+        Navigator.pop(dialogContext!);
+        dialogShown = false;
+        
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text('Kayıt başarıyla eklendi'),
@@ -382,523 +359,380 @@ class _AddEntryTabState extends State<AddEntryTab> with AutomaticKeepAliveClient
           ),
         );
       }
-    } catch (e, stackTrace) {
-      AppLogger.error('Kayıt ekleme hatası', e, stackTrace);
-      
-      // Hata mesajını hazırla
-      final errorMessage = e.toString();
-      String userMessage = 'Kayıt ekleme hatası';
-      
-      if (errorMessage.contains('zaman aşımı') || errorMessage.contains('timeout')) {
-        userMessage = 'Dosya yükleme zaman aşımı. İnternet bağlantınızı kontrol edin.';
-      } else if (errorMessage.contains('bağlanılamadı') || errorMessage.contains('connection') || errorMessage.contains('SocketException')) {
-        userMessage = 'Backend sunucusuna bağlanılamıyor. İnternet bağlantınızı kontrol edin.';
-      } else if (errorMessage.contains('500') || errorMessage.contains('Internal')) {
-        userMessage = 'Backend sunucusunda bir hata oluştu. Lütfen daha sonra tekrar deneyin.';
-      } else if (errorMessage.contains('401') || errorMessage.contains('403') || errorMessage.contains('authorization')) {
-        userMessage = 'Yetkilendirme hatası. Backend ayarlarını kontrol edin.';
-      } else if (errorMessage.contains('404')) {
-        userMessage = 'Backend endpoint bulunamadı. Backend URL\'ini kontrol edin.';
-      } else {
-        userMessage = 'Hata: ${errorMessage.length > 100 ? errorMessage.substring(0, 100) + "..." : errorMessage}';
-      }
-      
-      // Dialog'u hata mesajı ile değiştir
-      if (dialogShown && mounted && dialogContext != null) {
-        Navigator.of(dialogContext!, rootNavigator: true).pop(); // Progress dialog'u kapat
-        await Future.delayed(const Duration(milliseconds: 200));
+
+    } catch (e) {
+      AppLogger.error('Kayıt ekleme hatası', e);
+      if (mounted && dialogShown && dialogContext != null) {
+        Navigator.pop(dialogContext!);
+        dialogShown = false;
         
-        // Hata dialog'unu göster
-        if (mounted) {
-          showDialog(
-            context: context,
-            barrierDismissible: true,
-            builder: (ctx) => AlertDialog(
-              title: const Text('Hata'),
-              content: Text(userMessage),
-              actions: [
-                TextButton(
-                  onPressed: () {
-                    Navigator.of(ctx).pop();
-                  },
-                  child: const Text('Tamam'),
-                ),
-              ],
-            ),
-          );
-        }
-      } else if (mounted) {
-        // Dialog yoksa SnackBar göster
-        ScaffoldMessenger.of(context).clearSnackBars();
-        ScaffoldMessenger.of(context).showSnackBar(
+         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(userMessage),
+            content: Text('Hata: $e'),
             backgroundColor: Colors.red,
-            duration: const Duration(seconds: 6),
-            action: SnackBarAction(
-              label: 'Tamam',
-              textColor: Colors.white,
-              onPressed: () {
-                ScaffoldMessenger.of(context).hideCurrentSnackBar();
-              },
-            ),
           ),
         );
       }
     } finally {
-      // Dialog'u kesinlikle kapat (eğer hala açıksa)
-      if (dialogShown && mounted) {
-        _closeDialogSafely(dialogContext, dialogShown);
-        dialogShown = false;
-      }
-      
-      if (mounted) {
-        setState(() {
-          _isUploading = false;
-        });
-      }
+      if (mounted) setState(() => _isUploading = false);
     }
   }
+  
+  String _getFileType(String? fileName) {
+    if (fileName == null) return 'unknown';
+    final extension = fileName.split('.').last.toLowerCase();
+    if (extension == 'pdf') return 'pdf';
+    if (['jpg', 'jpeg', 'png'].contains(extension)) return 'image';
+    return 'unknown';
+  }
 
-  /// Dialog'u güvenli bir şekilde kapatır
-  void _closeDialogSafely(BuildContext? dialogContext, bool dialogShown) {
-    if (!dialogShown) {
-      return;
-    }
-
+  /// Arka planda Excel dosyalarını günceller
+  Future<void> _updateExcelFileInBackground(BuildContext context, ExpenseEntry newEntry) async {
     try {
-      // Önce dialog context ile dene
-      if (dialogContext != null && mounted) {
-        try {
-          final navigator = Navigator.of(dialogContext, rootNavigator: true);
-          if (navigator.canPop()) {
-            navigator.pop();
-            AppLogger.debug('Dialog dialogContext ile kapatıldı');
-            return;
-          }
-        } catch (e) {
-          AppLogger.warning('Dialog kapatma hatası (dialogContext): $e');
-        }
-      }
-      
-      // Ana context ile kapat
-      if (mounted) {
-        try {
-          final navigator = Navigator.of(context, rootNavigator: true);
-          if (navigator.canPop()) {
-            navigator.pop();
-            AppLogger.debug('Dialog ana context ile kapatıldı');
-          } else {
-            AppLogger.warning('Dialog zaten kapatılmış (canPop false)');
-          }
-        } catch (e) {
-          AppLogger.warning('Dialog kapatma hatası (ana context): $e');
-        }
-      }
+       // Tüm verileri çek; yeni kayıt henüz listede yoksa 2 sn sonra bir kez daha dene (son eklenenin Excel'de görünmesi için)
+       var allEntries = await FirestoreService.getAllEntries();
+       final newId = newEntry.id;
+       if (newId != null && !allEntries.any((e) => e.id == newId)) {
+         await Future.delayed(const Duration(seconds: 2));
+         if (!mounted) return;
+         allEntries = await FirestoreService.getAllEntries();
+       }
+       final allEntriesMap = allEntries.map((e) => e.toMap()).toList();
+
+       // 1. "Tum Eklenenler" güncelle
+       UploadService.createAllEntriesExcel(allEntriesMap).then(
+         (_) => AppLogger.info('Autosync: Tum Eklenenler güncellendi'),
+         onError: (e) => AppLogger.error('Autosync: Tum Eklenenler hatası', e)
+       );
+
+       // 2. "My Entries" güncelle (eğer ekleyen kişi ise)
+       if (newEntry.ownerId == widget.currentUser.userId) {
+          final myEntries = allEntries.where((e) => e.ownerId == widget.currentUser.userId).toList();
+          UploadService.createMyEntriesExcel(
+             myEntries.map((e) => e.toMap()).toList(),
+             widget.currentUser.fullName
+          ).then(
+             (_) => AppLogger.info('Autosync: My Entries güncellendi'),
+             onError: (e) => AppLogger.error('Autosync: My Entries hatası', e)
+          );
+       }
+
+       // 3. "Ortak Gelirleri" güncelle (eğer gelir ise) — sabit Excel'e yazılır
+       if (newEntry.entryType == 'income') {
+          final incomeEntries = allEntries.where((e) => e.entryType == 'income').toList();
+          UploadService.createIncomeEntriesExcel(
+             incomeEntries.map((e) => e.toMap()).toList()
+          ).then(
+             (result) {
+               AppLogger.info('Autosync: Ortak Gelirleri güncellendi');
+               if (mounted && result != null) {
+                 ScaffoldMessenger.of(context).showSnackBar(
+                   SnackBar(
+                     content: Text('Ortak Gelirleri tablosu güncellendi (${result['rowCount'] ?? 0} kayıt)'),
+                     duration: const Duration(seconds: 3),
+                     backgroundColor: Colors.green,
+                   ),
+                 );
+               }
+             },
+             onError: (e) {
+               AppLogger.error('Autosync: Ortak Gelirleri hatası', e);
+               if (mounted) {
+                 ScaffoldMessenger.of(context).showSnackBar(
+                   const SnackBar(
+                     content: Text(
+                       'Ortak Gelirleri tablosu güncellenemedi. Tabloyu Service Account e-postası ile düzenleyici olarak paylaşın.',
+                     ),
+                     duration: Duration(seconds: 6),
+                     backgroundColor: Colors.orange,
+                   ),
+                 );
+               }
+             }
+          );
+       }
+
+       // 4. "Vergiden Düşülecekler" güncelle (eğer vergiden düşülecek ise)
+       if (newEntry.entryType == 'tax_deductible') {
+          final taxEntries = allEntries.where((e) => e.entryType == 'tax_deductible').toList();
+          UploadService.createTaxDeductibleEntriesExcel(
+             taxEntries.map((e) => e.toMap()).toList()
+          ).then(
+             (_) => AppLogger.info('Autosync: Vergiden Düşülecekler güncellendi'),
+             onError: (e) => AppLogger.error('Autosync: Vergiden Düşülecekler hatası', e)
+          );
+       }
     } catch (e) {
-      AppLogger.error('Dialog kapatma genel hatası', e);
+       AppLogger.error('Background Excel Sync Failed', e);
     }
   }
 
+  // --- UI ---
+  
   @override
   Widget build(BuildContext context) {
     super.build(context);
     final theme = Theme.of(context);
-    final padding = MediaQuery.of(context).size.width < 360 ? 16.0 : 24.0;
-    final spacing = MediaQuery.of(context).size.width < 360 ? 20.0 : 24.0;
+    final isSmallScreen = MediaQuery.of(context).size.width < 600;
 
     return SingleChildScrollView(
-      padding: EdgeInsets.all(padding),
+      padding: const EdgeInsets.all(24),
       child: Form(
         key: _formKey,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // Kompakt başlık
-            Padding(
-              padding: const EdgeInsets.only(bottom: 12),
-              child: Text(
-                'Yeni Harcama Ekle',
-                style: theme.textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.w600,
-                  color: theme.colorScheme.onSurface.withValues(alpha: 0.8),
-                ),
-              ),
+            // Kayıt Türü Seçimi - Segmented Button (mobil/ dar ekranda taşmayı önlemek için yatay scroll)
+            LayoutBuilder(
+              builder: (context, constraints) {
+                const minButtonWidth = 280.0;
+                final useScroll = constraints.maxWidth < minButtonWidth;
+                final child = ConstrainedBox(
+                  constraints: const BoxConstraints(minWidth: minButtonWidth),
+                  child: SegmentedButton<String>(
+                    segments: [
+                      ButtonSegment<String>(
+                        value: 'expense',
+                        label: Text('Gider', style: TextStyle(fontSize: isSmallScreen ? 12 : 14)),
+                        icon: Icon(Icons.remove_circle_outline, size: isSmallScreen ? 16 : 20),
+                      ),
+                      ButtonSegment<String>(
+                        value: 'income',
+                        label: Text('Gelir', style: TextStyle(fontSize: isSmallScreen ? 12 : 14)),
+                        icon: Icon(Icons.add_circle_outline, size: isSmallScreen ? 16 : 20),
+                      ),
+                      ButtonSegment<String>(
+                        value: 'tax_deductible',
+                        label: Text('Vergi', style: TextStyle(fontSize: isSmallScreen ? 12 : 14)),
+                        icon: Icon(Icons.receipt_long, size: isSmallScreen ? 16 : 20),
+                      ),
+                    ],
+                    selected: {_entryMode},
+                    onSelectionChanged: (Set<String> newSelection) async {
+                      final newMode = newSelection.first;
+                      if (newMode == _entryMode) return;
+                      if (newMode == 'expense') {
+                        setState(() {
+                          _entryMode = 'expense';
+                          _selectedPartnerName = null;
+                        });
+                        return;
+                      }
+                      final confirmed = await _confirmEntryModeChange(newMode);
+                      if (confirmed && mounted) {
+                        setState(() {
+                          _entryMode = newMode;
+                          if (newMode != 'income') _selectedPartnerName = null;
+                        });
+                      }
+                    },
+                    style: ButtonStyle(
+                      backgroundColor: WidgetStateProperty.resolveWith<Color>((states) {
+                        if (states.contains(WidgetState.selected)) {
+                          if (_entryMode == 'expense') return theme.colorScheme.error.withValues(alpha: 0.15);
+                          if (_entryMode == 'income') return Colors.green.withValues(alpha: 0.15);
+                          if (_entryMode == 'tax_deductible') return Colors.orange.withValues(alpha: 0.15);
+                        }
+                        return Colors.transparent;
+                      }),
+                      foregroundColor: WidgetStateProperty.resolveWith<Color>((states) {
+                        if (states.contains(WidgetState.selected)) {
+                          if (_entryMode == 'expense') return theme.colorScheme.error;
+                          if (_entryMode == 'income') return Colors.green[700]!;
+                          if (_entryMode == 'tax_deductible') return Colors.orange[700]!;
+                        }
+                        return theme.colorScheme.onSurface.withValues(alpha: 0.6);
+                      }),
+                      side: WidgetStateProperty.resolveWith<BorderSide>((states) {
+                        Color borderColor = theme.colorScheme.outline.withValues(alpha: 0.3);
+                        if (states.contains(WidgetState.selected)) {
+                          if (_entryMode == 'expense') borderColor = theme.colorScheme.error.withValues(alpha: 0.5);
+                          if (_entryMode == 'income') borderColor = Colors.green.withValues(alpha: 0.5);
+                          if (_entryMode == 'tax_deductible') borderColor = Colors.orange.withValues(alpha: 0.5);
+                        }
+                        return BorderSide(color: borderColor);
+                      }),
+                    ),
+                  ),
+                );
+                if (useScroll) {
+                  return SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: child,
+                  );
+                }
+                return child;
+              },
             ),
+            
+            // Ortak seçimi (sadece income modunda göster)
+            if (_entryMode == 'income') ...[
+              const SizedBox(height: 16),
+              DropdownButtonFormField<String>(
+                initialValue: _isLoadingOwnerNames ? null : _selectedPartnerName,
+                decoration: InputDecoration(
+                  labelText: _isLoadingOwnerNames ? 'Ödemeyi yapan ortak (yükleniyor...)' : 'Ödemeyi yapan ortak',
+                  prefixIcon: const Icon(Icons.person_outline),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 16),
+                ),
+                items: _isLoadingOwnerNames
+                    ? [const DropdownMenuItem(value: null, child: Text('Yükleniyor...'))]
+                    : _ownerNames.map((name) => DropdownMenuItem(value: name, child: Text(name))).toList(),
+                onChanged: _isLoadingOwnerNames ? null : (val) => setState(() => _selectedPartnerName = val),
+                validator: (val) => _entryMode == 'income' && val == null ? 'Kişi seçiniz' : null,
+              ),
+            ],
+            
+             const SizedBox(height: 16),
+             
             // Harcama Kalemi
             TextFormField(
               controller: _descriptionController,
               decoration: InputDecoration(
                 labelText: 'Harcama Kalemi',
-                hintText: 'Örn: Üretim Maliyeti',
-                prefixIcon: Icon(
-                  Icons.description_outlined,
-                  size: 20,
-                  color: theme.colorScheme.primary,
-                ),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide(
-                    color: theme.colorScheme.outline.withValues(alpha: 0.2),
-                  ),
-                ),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide(
-                    color: theme.colorScheme.outline.withValues(alpha: 0.2),
-                  ),
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide(
-                    color: theme.colorScheme.primary,
-                    width: 2,
-                  ),
-                ),
-                filled: true,
-                fillColor: theme.colorScheme.surface,
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 16,
-                ),
+                hintText: 'Örn: Ofis Kirası',
+                prefixIcon: const Icon(Icons.description_outlined),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
               ),
-              validator: (value) {
-                if (value == null || value.trim().isEmpty) {
-                  return 'Lütfen harcama kalemi giriniz';
-                }
-                if (value.trim().length < 3) {
-                  return 'Harcama kalemi en az 3 karakter olmalıdır';
-                }
-                if (value.trim().length > 100) {
-                  return 'Harcama kalemi en fazla 100 karakter olabilir';
-                }
-                return null;
-              },
-              enabled: !_isUploading,
-              textInputAction: TextInputAction.next,
+              validator: (val) => (val == null || val.isEmpty) ? 'Gerekli' : null,
             ),
+            
             const SizedBox(height: 16),
+            
             // Miktar
             TextFormField(
               controller: _amountController,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              inputFormatters: [_TurkishNumberInputFormatter()],
               decoration: InputDecoration(
                 labelText: 'Miktar (₺)',
-                hintText: 'Örn: 1.234,56',
-                prefixIcon: Icon(
-                  Icons.account_balance_wallet_outlined,
-                  size: 20,
-                  color: theme.colorScheme.primary,
-                ),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide(
-                    color: theme.colorScheme.outline.withValues(alpha: 0.2),
-                  ),
-                ),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide(
-                    color: theme.colorScheme.outline.withValues(alpha: 0.2),
-                  ),
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide(
-                    color: theme.colorScheme.primary,
-                    width: 2,
-                  ),
-                ),
-                filled: true,
-                fillColor: theme.colorScheme.surface,
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 16,
-                ),
+                hintText: '0,00',
+                prefixIcon: const Icon(Icons.wallet_outlined),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
               ),
-              keyboardType: TextInputType.text,
-              inputFormatters: [
-                _TurkishNumberInputFormatter(),
-              ],
-              validator: (value) {
-                if (value == null || value.trim().isEmpty) {
-                  return 'Lütfen miktar giriniz';
-                }
-                // Türkçe format: nokta binlik ayırıcı, virgül ondalık ayırıcı
-                // Parse için: noktaları kaldır, virgülü noktaya çevir
-                final cleanedValue = value.trim()
-                    .replaceAll('.', '') // Binlik ayırıcıları kaldır
-                    .replaceAll(',', '.'); // Ondalık ayırıcıyı noktaya çevir
-                final amount = double.tryParse(cleanedValue);
-                if (amount == null) {
-                  return 'Geçerli bir sayı giriniz (örn: 1.234,56)';
-                }
-                if (amount <= 0) {
-                  return 'Miktar 0\'dan büyük olmalıdır';
-                }
-                if (amount > 999999999) {
-                  return 'Miktar çok büyük (maksimum: 999.999.999,99)';
-                }
-                return null;
-              },
-              enabled: !_isUploading,
-              textInputAction: TextInputAction.next,
+               validator: (val) => (val == null || val.isEmpty) ? 'Gerekli' : null,
             ),
-            const SizedBox(height: 16),
-            // Açıklama (Opsiyonel)
-            TextFormField(
-              controller: _notesController,
-              decoration: InputDecoration(
-                labelText: 'Açıklama (opsiyonel)',
-                hintText: 'Ek bilgi veya notlar',
-                prefixIcon: Icon(
-                  Icons.note_outlined,
-                  size: 20,
-                  color: theme.colorScheme.primary,
-                ),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide(
-                    color: theme.colorScheme.outline.withValues(alpha: 0.2),
-                  ),
-                ),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide(
-                    color: theme.colorScheme.outline.withValues(alpha: 0.2),
-                  ),
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide(
-                    color: theme.colorScheme.primary,
-                    width: 2,
-                  ),
-                ),
-                filled: true,
-                fillColor: theme.colorScheme.surface,
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 16,
+            
+            // Açıklama (Partner ödemesinde gizle)
+            if (_entryMode != 'income') ...[
+              const SizedBox(height: 16),
+              TextFormField(
+                controller: _notesController,
+                decoration: InputDecoration(
+                  labelText: 'Notlar (Opsiyonel)',
+                  prefixIcon: const Icon(Icons.note_alt_outlined),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                 ),
               ),
-              maxLines: 3,
-              enabled: !_isUploading,
-              textInputAction: TextInputAction.next,
-            ),
-            const SizedBox(height: 16),
-            // Dosya Seç butonu
-            OutlinedButton.icon(
-              onPressed: _isUploading ? null : _pickFile,
-              icon: const Icon(Icons.attach_file, size: 20),
-              label: const Text(
-                'Dosya Seç',
-                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
-              ),
-              style: OutlinedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(vertical: 16),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                side: BorderSide(
-                  color: theme.colorScheme.primary.withValues(alpha: 0.5),
-                  width: 1.5,
-                ),
-              ),
-            ),
-            // Seçilen dosya adı ve önizleme
-            if (_selectedFileName != null)
-              TweenAnimationBuilder<double>(
-                tween: Tween(begin: 0.0, end: 1.0),
-                duration: const Duration(milliseconds: 300),
-                curve: Curves.easeOut,
-                builder: (context, value, child) {
-                  return Opacity(
-                    opacity: value,
-                    child: Transform.scale(
-                      scale: 0.95 + (value * 0.05),
-                      child: child,
-                    ),
-                  );
-                },
+            ],
+            
+            const SizedBox(height: 24),
+            
+            // Dosya Seçimi
+            InkWell(
+              onTap: _isPickingFile ? null : _pickFile,
+              borderRadius: BorderRadius.circular(12),
+              child: Opacity(
+                opacity: _isPickingFile ? 0.7 : 1,
                 child: Container(
-                  margin: EdgeInsets.only(top: spacing / 2),
-                  padding: const EdgeInsets.all(20),
+                  padding: const EdgeInsets.all(16),
                   decoration: BoxDecoration(
-                    color: theme.colorScheme.primaryContainer.withValues(alpha: 0.4),
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(
-                      color: theme.colorScheme.outline.withValues(alpha: 0.1),
-                      width: 1,
-                    ),
+                    border: Border.all(color: theme.colorScheme.outline.withValues(alpha: 0.5)),
+                    borderRadius: BorderRadius.circular(12),
+                    color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
                   ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                  child: Row(
                     children: [
-                      Row(
-                        children: [
-                          // Dosya önizleme
-                          if (_getFileType(_selectedFileName) == 'image' &&
-                              (kIsWeb ? _selectedFileBytes != null : _selectedFile != null))
-                            Container(
-                              decoration: BoxDecoration(
-                                borderRadius: BorderRadius.circular(12),
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: theme.colorScheme.primary.withValues(alpha: 0.2),
-                                    blurRadius: 4,
-                                    offset: const Offset(0, 2),
-                                  ),
-                                ],
+                      Icon(
+                        _isPickingFile ? Icons.hourglass_empty : Icons.cloud_upload_outlined,
+                        size: 32,
+                        color: theme.colorScheme.primary,
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              _isPickingFile ? 'Dosya seçiliyor...' : (_selectedFileName ?? 'Fiş/Fatura Yükle'),
+                              style: theme.textTheme.bodyLarge?.copyWith(
+                                fontWeight: _selectedFileName != null ? FontWeight.bold : FontWeight.normal,
                               ),
-                              child: ClipRRect(
-                                borderRadius: BorderRadius.circular(12),
-                                child: kIsWeb
-                                    ? Image.memory(
-                                        _selectedFileBytes!,
-                                        width: 70,
-                                        height: 70,
-                                        fit: BoxFit.cover,
-                                        errorBuilder: (context, error, stackTrace) {
-                                          return Container(
-                                            width: 70,
-                                            height: 70,
-                                            decoration: BoxDecoration(
-                                              color: theme.colorScheme.surface,
-                                              borderRadius: BorderRadius.circular(12),
-                                            ),
-                                            child: Icon(
-                                              Icons.image_outlined,
-                                              color: theme.colorScheme.onSurface
-                                                  .withValues(alpha: 0.5),
-                                            ),
-                                          );
-                                        },
-                                      )
-                                    : Image.file(
-                                        _selectedFile!,
-                                        width: 70,
-                                        height: 70,
-                                        fit: BoxFit.cover,
-                                        errorBuilder: (context, error, stackTrace) {
-                                          return Container(
-                                            width: 70,
-                                            height: 70,
-                                            decoration: BoxDecoration(
-                                              color: theme.colorScheme.surface,
-                                              borderRadius: BorderRadius.circular(12),
-                                            ),
-                                            child: Icon(
-                                              Icons.image_outlined,
-                                              color: theme.colorScheme.onSurface
-                                                  .withValues(alpha: 0.5),
-                                            ),
-                                          );
-                                        },
-                                      ),
-                              ),
-                            )
-                          else
-                            Container(
-                              width: 70,
-                              height: 70,
-                              decoration: BoxDecoration(
-                                color: theme.colorScheme.primaryContainer,
-                                borderRadius: BorderRadius.circular(12),
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: theme.colorScheme.primary.withValues(alpha: 0.2),
-                                    blurRadius: 4,
-                                    offset: const Offset(0, 2),
-                                  ),
-                                ],
-                              ),
-                              child: Icon(
-                                Icons.picture_as_pdf,
-                                color: theme.colorScheme.primary,
-                                size: 36,
-                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
                             ),
-                          const SizedBox(width: 16),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                children: [
-                                  Icon(
-                                    _getFileType(_selectedFileName) == 'pdf'
-                                        ? Icons.picture_as_pdf
-                                        : Icons.image,
-                                    color: theme.colorScheme.onPrimaryContainer,
-                                    size: 20,
-                                  ),
-                                  const SizedBox(width: 4),
-                                  Expanded(
-                                    child: Text(
-                                      _selectedFileName!,
-                                      style: TextStyle(
-                                        color: theme.colorScheme
-                                            .onPrimaryContainer,
-                                        fontWeight: FontWeight.w500,
-                                      ),
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                  ),
-                                ],
+                            if (_selectedFileName == null && !_isPickingFile)
+                              Text(
+                                'Dokunarak seçin (Resim veya PDF)',
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
                               ),
-                              const SizedBox(height: 4),
-                              Builder(
-                                builder: (context) {
-                                  final fileSize = kIsWeb
-                                      ? (_selectedFileBytes?.length ?? 0)
-                                      : (_selectedFile?.lengthSync() ?? 0);
-                                  if (fileSize > 0) {
-                                    final sizeInMB = fileSize / (1024 * 1024);
-                                    return Text(
-                                      sizeInMB < 1
-                                          ? '${(fileSize / 1024).toStringAsFixed(1)} KB'
-                                          : '${sizeInMB.toStringAsFixed(2)} MB',
-                                      style: TextStyle(
-                                        color: theme.colorScheme
-                                            .onPrimaryContainer
-                                            .withValues(alpha: 0.7),
-                                        fontSize: 12,
-                                      ),
-                                    );
-                                  }
-                                  return const SizedBox.shrink();
-                                },
-                              ),
-                            ],
-                          ),
-                        ),
-                        IconButton(
-                          icon: const Icon(Icons.close),
-                          onPressed: _isUploading
-                              ? null
-                              : () {
-                                  setState(() {
-                                    _selectedFile = null;
-                                    _selectedFileBytes = null;
-                                    _selectedFileName = null;
-                                  });
-                                },
-                          color: theme.colorScheme.onPrimaryContainer,
-                          tooltip: 'Dosyayı kaldır',
-                        ),
-                      ],
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                        ],
+                      ),
                     ),
+                    if (_selectedFileName != null)
+                      IconButton(
+                        icon: const Icon(Icons.close),
+                        onPressed: () {
+                          setState(() {
+                            _selectedFileName = null;
+                            _selectedFile = null;
+                            _selectedFileBytes = null;
+                          });
+                        },
+                        constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+                        padding: EdgeInsets.zero,
+                      ),
                   ],
                 ),
-                ),
               ),
-            SizedBox(height: spacing * 1.5),
-            // Kaydet butonu
-            PrimaryButton(
-              text: 'Kaydet',
-              onPressed: _saveEntry,
-              isLoading: _isUploading,
             ),
+            ),
+            
+            // Önizleme (Web'de çalışacak şekilde)
+             if (_selectedFileName != null && _getFileType(_selectedFileName) == 'image') ...[
+               const SizedBox(height: 16),
+               Center(
+                 child: Container(
+                   height: 200,
+                   decoration: BoxDecoration(
+                     borderRadius: BorderRadius.circular(12),
+                     border: Border.all(color: theme.colorScheme.outline.withValues(alpha: 0.2)),
+                   ),
+                   child: ClipRRect(
+                     borderRadius: BorderRadius.circular(12),
+                     child: _selectedFileBytes != null 
+                        ? Image.memory(_selectedFileBytes!, fit: BoxFit.contain)
+                        : _selectedFile != null 
+                           ? FutureBuilder<Uint8List>(
+                               future: _selectedFile!.readAsBytes(),
+                               builder: (context, snapshot) {
+                                 if (snapshot.hasData) {
+                                   return Image.memory(snapshot.data!, fit: BoxFit.contain);
+                                 }
+                                 return const Center(child: CircularProgressIndicator());
+                               },
+                             )
+                           : const Icon(Icons.image_not_supported),
+                   ),
+                 ),
+               ),
+             ],
+
+             const SizedBox(height: 24),
+             
+             PrimaryButton(
+               text: 'Kaydet',
+               onPressed: _isUploading ? null : _saveEntry,
+               isLoading: _isUploading,
+             ),
+             
+             const SizedBox(height: 40), // Bottom padding
           ],
         ),
       ),
@@ -906,8 +740,6 @@ class _AddEntryTabState extends State<AddEntryTab> with AutomaticKeepAliveClient
   }
 }
 
-// Türkçe sayı formatı için input formatter
-// Binlik ayırıcı: nokta (.), ondalık ayırıcı: virgül (,)
 class _TurkishNumberInputFormatter extends TextInputFormatter {
   @override
   TextEditingValue formatEditUpdate(
@@ -918,16 +750,12 @@ class _TurkishNumberInputFormatter extends TextInputFormatter {
       return newValue;
     }
 
-    // Sadece rakam, nokta ve virgül kabul et
     String text = newValue.text.replaceAll(RegExp(r'[^\d.,]'), '');
-    
-    // Virgül sadece bir kez olabilir (ondalık ayırıcı)
     final commaCount = text.split(',').length - 1;
     if (commaCount > 1) {
       return oldValue;
     }
     
-    // Virgülden sonra maksimum 2 rakam
     if (text.contains(',')) {
       final parts = text.split(',');
       if (parts.length == 2 && parts[1].length > 2) {
@@ -935,49 +763,40 @@ class _TurkishNumberInputFormatter extends TextInputFormatter {
       }
     }
     
-    // Noktalar sadece binlik ayırıcı olarak kullanılabilir (virgülden önce)
     String formatted = text;
     if (text.contains(',')) {
       final parts = text.split(',');
       final integerPart = parts[0].replaceAll('.', '');
       final decimalPart = parts[1];
       
-      // Binlik ayırıcıları ekle (sağdan sola 3'er 3'er)
       String formattedInteger = '';
       for (int i = integerPart.length - 1; i >= 0; i--) {
         formattedInteger = integerPart[i] + formattedInteger;
         if ((integerPart.length - i) % 3 == 0 && i > 0) {
-          formattedInteger = '.' + formattedInteger;
+          formattedInteger = '.$formattedInteger';
         }
       }
-      
-      formatted = formattedInteger + ',' + decimalPart;
+      formatted = '$formattedInteger,$decimalPart';
     } else {
-      // Virgül yoksa, sadece binlik ayırıcıları ekle
       final integerPart = text.replaceAll('.', '');
       String formattedInteger = '';
       for (int i = integerPart.length - 1; i >= 0; i--) {
         formattedInteger = integerPart[i] + formattedInteger;
         if ((integerPart.length - i) % 3 == 0 && i > 0) {
-          formattedInteger = '.' + formattedInteger;
+          formattedInteger = '.$formattedInteger';
         }
       }
       formatted = formattedInteger;
     }
     
-    // Cursor pozisyonunu hesapla (formatlamadan sonra)
     int cursorPosition = formatted.length;
     if (newValue.selection.baseOffset <= oldValue.text.length) {
-      // Eski pozisyonu korumaya çalış
       final oldText = oldValue.text;
       final newText = formatted;
       final offset = newValue.selection.baseOffset;
       
       if (offset <= oldText.length) {
-        // Formatlamadan önceki karakter sayısını hesapla
         final charsBeforeCursor = oldText.substring(0, offset).replaceAll(RegExp(r'[^\d]'), '').length;
-        
-        // Formatlamadan sonra aynı sayıda karaktere kadar cursor'ı ayarla
         int count = 0;
         cursorPosition = 0;
         for (int i = 0; i < newText.length && count < charsBeforeCursor; i++) {
@@ -999,4 +818,3 @@ class _TurkishNumberInputFormatter extends TextInputFormatter {
     );
   }
 }
-

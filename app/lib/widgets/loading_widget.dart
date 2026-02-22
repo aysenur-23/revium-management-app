@@ -1,7 +1,6 @@
-/**
- * Loading widget'ı
- * Yükleme durumlarında gösterilir
- */
+/// Loading widget'ı
+/// Yükleme durumlarında gösterilir
+library;
 
 import 'package:flutter/material.dart';
 

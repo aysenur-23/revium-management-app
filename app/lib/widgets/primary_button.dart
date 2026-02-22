@@ -1,7 +1,6 @@
-/**
- * Birincil buton widget'ı
- * Tema ile uyumlu, modern görünümlü buton
- */
+/// Birincil buton widget'ı
+/// Tema ile uyumlu, modern görünümlü buton
+library;
 
 import 'package:flutter/material.dart';
 
@@ -45,7 +44,7 @@ class PrimaryButton extends StatelessWidget {
               )
             : Text(
                 text,
-                style: TextStyle(
+                style: const TextStyle(
                   fontSize: 17,
                   fontWeight: FontWeight.w700,
                   letterSpacing: 0.3,

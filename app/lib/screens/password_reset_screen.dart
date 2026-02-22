@@ -1,7 +1,6 @@
-/**
- * Şifre Sıfırlama Ekranı
- * Deep link'ten gelen action code ile şifre sıfırlama
- */
+/// Şifre Sıfırlama Ekranı
+/// Deep link'ten gelen action code ile şifre sıfırlama
+library;
 
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -67,8 +66,8 @@ class _PasswordResetScreenState extends State<PasswordResetScreen> {
           _isLoading = false;
         });
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text('Şifre sıfırlama linki geçersiz veya süresi dolmuş.'),
+          const SnackBar(
+            content: Text('Şifre sıfırlama linki geçersiz veya süresi dolmuş.'),
             backgroundColor: Colors.red,
           ),
         );

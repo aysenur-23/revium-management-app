@@ -1,7 +1,6 @@
-/**
- * Boş durum widget'ı
- * Liste boş olduğunda gösterilir
- */
+/// Boş durum widget'ı
+/// Liste boş olduğunda gösterilir
+library;
 
 import 'package:flutter/material.dart';
 

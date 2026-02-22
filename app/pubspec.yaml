@@ -16,6 +16,13 @@ dependencies:
   firebase_core: ^3.8.1
   firebase_auth: ^5.5.1
   cloud_firestore: ^5.6.0
+  firebase_messaging: ^15.2.0
+  
+  # Ön planda gelen FCM'i sistem bildirimi (üstte, uygulama logosuyla) göstermek için
+  flutter_local_notifications: ^18.0.1
+  
+  # Android 13+ bildirim izni (POST_NOTIFICATIONS) için
+  permission_handler: ^11.3.1
   
   # HTTP istekleri
   http: ^1.2.0
@@ -32,18 +39,18 @@ dependencies:
   # URL açma
   url_launcher: ^6.2.2
   
-  # Network connectivity
-  connectivity_plus: ^5.0.2
-  
   # Dosya işlemleri
   path_provider: ^2.1.1
   share_plus: ^7.2.1
-  open_file: ^3.5.2
+  open_filex: ^4.1.0
   mime: ^1.0.4
   
   # PDF görüntüleme
-  syncfusion_flutter_pdfviewer: ^28.1.36
+  syncfusion_flutter_pdfviewer: ^28.2.12
   cross_file: ^0.3.5+1
+
+  # Google Drive OAuth (Excel'ler kullanıcının Drive kotasında oluşsun)
+  google_sign_in: ^6.2.2
 
 dev_dependencies:
   flutter_test:

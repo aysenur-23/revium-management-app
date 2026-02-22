@@ -1,7 +1,6 @@
-/**
- * Splash / Login ekranı
- * Kullanıcıdan mail ve şifre alır ve Firebase Auth ile giriş yapar
- */
+/// Splash / Login ekranı
+/// Kullanıcıdan mail ve şifre alır ve Firebase Auth ile giriş yapar
+library;
 
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -85,10 +84,10 @@ class _SplashLoginScreenState extends State<SplashLoginScreen> {
     if (email.isEmpty) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text('Lütfen e-posta adresinizi giriniz'),
+          const SnackBar(
+            content: Text('Lütfen e-posta adresinizi giriniz'),
             backgroundColor: Colors.orange,
-            duration: const Duration(seconds: 3),
+            duration: Duration(seconds: 3),
           ),
         );
       }
@@ -99,10 +98,10 @@ class _SplashLoginScreenState extends State<SplashLoginScreen> {
     if (!RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$').hasMatch(email)) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text('Lütfen geçerli bir e-posta adresi giriniz'),
+          const SnackBar(
+            content: Text('Lütfen geçerli bir e-posta adresi giriniz'),
             backgroundColor: Colors.orange,
-            duration: const Duration(seconds: 3),
+            duration: Duration(seconds: 3),
           ),
         );
       }
@@ -114,10 +113,22 @@ class _SplashLoginScreenState extends State<SplashLoginScreen> {
         _isLoading = true;
       });
 
-      // E-posta gönder - Firebase standart şifre sıfırlama akışı
-      // Kullanıcı e-postadaki linke tıklayıp web'de şifresini değiştirecek
-      await _auth.sendPasswordResetEmail(email: email);
-      AppLogger.info('Şifre sıfırlama e-postası gönderildi (email: $email)');
+      // E-posta gönder - ActionCodeSettings ile deep link yapılandırması
+      // Bu sayede kullanıcı linke tıkladığında uygulama açılacak
+      final actionCodeSettings = ActionCodeSettings(
+        url: 'https://manage-d9a18.firebaseapp.com/?mode=resetPassword', // Continue URL
+        handleCodeInApp: true,
+        iOSBundleId: 'com.revium.management',
+        androidPackageName: 'com.revium.management',
+        androidInstallApp: true,
+        androidMinimumVersion: '21', // Android 5.0+
+      );
+
+      await _auth.sendPasswordResetEmail(
+        email: email,
+        actionCodeSettings: actionCodeSettings,
+      );
+      AppLogger.info('Şifre sıfırlama e-postası gönderildi (deep link ile) - email: $email');
       
       // Şifre sıfırlama flag'ini ayarla (otomatik girişi engellemek için) - ÖNCE flag'i ayarla
       await LocalStorageService.setPasswordResetPending(true);
@@ -410,6 +421,25 @@ class _SplashLoginScreenState extends State<SplashLoginScreen> {
           throw Exception('Ad soyad en az 3 karakter olmalıdır');
         }
 
+        // E-posta formatı kontrolü (giriş kısmındaki gibi - aynı filtreleme)
+        final emailRegex = RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$');
+        if (!emailRegex.hasMatch(email)) {
+          throw Exception('Geçerli bir e-posta adresi giriniz');
+        }
+        // Email formatının daha detaylı kontrolü
+        final emailParts = email.split('@');
+        if (emailParts.length != 2) {
+          throw Exception('Geçerli bir e-posta adresi giriniz');
+        }
+        final localPart = emailParts[0];
+        final domainPart = emailParts[1];
+        if (localPart.isEmpty || localPart.length > 64) {
+          throw Exception('Geçerli bir e-posta adresi giriniz');
+        }
+        if (domainPart.isEmpty || !domainPart.contains('.')) {
+          throw Exception('Geçerli bir e-posta adresi giriniz');
+        }
+
         // Şifre güç kontrolü
         if (password.length < 6) {
           throw Exception('Şifre en az 6 karakter olmalıdır');
@@ -474,7 +504,7 @@ class _SplashLoginScreenState extends State<SplashLoginScreen> {
             SnackBar(
               content: Row(
                 children: [
-                  Icon(Icons.check_circle, color: Colors.white),
+                  const Icon(Icons.check_circle, color: Colors.white),
                   const SizedBox(width: 12),
                   Expanded(
                     child: Text(
@@ -781,7 +811,7 @@ class _SplashLoginScreenState extends State<SplashLoginScreen> {
           }
         });
       } else {
-        AppLogger.warning('Navigasyon yapılamadı: mounted=${mounted}, _isNavigating=$_isNavigating');
+        AppLogger.warning('Navigasyon yapılamadı: mounted=$mounted, _isNavigating=$_isNavigating');
       }
     } on FirebaseAuthException catch (e) {
       AppLogger.error('FirebaseAuthException: ${e.code} - ${e.message}', e);
@@ -855,7 +885,7 @@ class _SplashLoginScreenState extends State<SplashLoginScreen> {
                   SnackBar(
                     content: Row(
                       children: [
-                        Icon(Icons.check_circle, color: Colors.white),
+                        const Icon(Icons.check_circle, color: Colors.white),
                         const SizedBox(width: 12),
                         Expanded(
                           child: Text(
@@ -1003,7 +1033,7 @@ class _SplashLoginScreenState extends State<SplashLoginScreen> {
                     SnackBar(
                       content: Row(
                         children: [
-                          Icon(Icons.check_circle, color: Colors.white),
+                          const Icon(Icons.check_circle, color: Colors.white),
                           const SizedBox(width: 12),
                           Expanded(
                             child: Text(
@@ -1111,7 +1141,7 @@ class _SplashLoginScreenState extends State<SplashLoginScreen> {
             child: SingleChildScrollView(
               padding: EdgeInsets.all(padding),
               child: ConstrainedBox(
-                constraints: BoxConstraints(
+                constraints: const BoxConstraints(
                   maxWidth: 420,
                 ),
                 child: Form(
@@ -1403,7 +1433,22 @@ class _SplashLoginScreenState extends State<SplashLoginScreen> {
                               if (value == null || value.trim().isEmpty) {
                                 return 'Lütfen e-posta adresinizi giriniz';
                               }
-                              if (!RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$').hasMatch(value.trim())) {
+                              // Email format kontrolü - giriş ve kayıt için aynı filtreleme
+                              final emailRegex = RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$');
+                              if (!emailRegex.hasMatch(value.trim())) {
+                                return 'Geçerli bir e-posta adresi giriniz';
+                              }
+                              // Email formatının daha detaylı kontrolü
+                              final emailParts = value.trim().split('@');
+                              if (emailParts.length != 2) {
+                                return 'Geçerli bir e-posta adresi giriniz';
+                              }
+                              final localPart = emailParts[0];
+                              final domainPart = emailParts[1];
+                              if (localPart.isEmpty || localPart.length > 64) {
+                                return 'Geçerli bir e-posta adresi giriniz';
+                              }
+                              if (domainPart.isEmpty || !domainPart.contains('.')) {
                                 return 'Geçerli bir e-posta adresi giriniz';
                               }
                               return null;
